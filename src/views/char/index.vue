@@ -1,11 +1,16 @@
 <template>
   <el-container style="height: 90vh">
     <el-aside width="200px" style="padding-top: 20px; overflow-y: auto">
+      <div class="thumb-header" v-if="images.length > 0">
+        {{ currentImageIndex + 1 }} / {{ images.length }}
+      </div>
       <div v-if="thumbnails.length > 0" class="thumbnails-container">
         <div
           v-for="(thumbnail, index) in thumbnails"
           :key="index"
           class="thumbnail"
+          :class="{ active: index === currentImageIndex }"
+          :ref="`thumb-${index}`"
           @click="selectImage(index)"
         >
           <img :src="thumbnail" alt="Thumbnail" class="thumbnail-img" />
@@ -94,6 +99,14 @@
               {{ item.classText }}: {{ item.confText }}
             </el-radio>
           </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="countWarningVisible">
+          <el-alert
+            :title="countWarningText"
+            type="error"
+            show-icon
+            :closable="false"
+          />
         </el-form-item>
         <el-form-item>
           <span>注釈数: {{ confidenceList.length }} 件</span>
@@ -254,6 +267,11 @@ export default {
         "沖縄",
         "飛鳥",
         "船橋",
+        "江戸川",
+        "十勝",
+        "日光",
+        "南信州",
+        "安曇野",
         "dot",
         ...Array(10).keys().map(String),
         ..."あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん",
@@ -461,6 +479,11 @@ export default {
         198: "Y",
         199: "飛鳥",
         200: "船橋",
+        201: "江戸川",
+        202: "十勝",
+        203: "日光",
+        204: "南信州",
+        205: "安曇野",
       },
       colorMap: {},
       isDrawing: false,
@@ -489,6 +512,12 @@ export default {
     window.removeEventListener("keydown", this.handleKeyDown);
   },
   computed: {
+    countWarningVisible() {
+      return this.confidenceList.length !== 9;
+    },
+    countWarningText() {
+      return "注釈数異常";
+    },
     scaleStyle() {
       // 让 transform-origin 固定左上(0,0)
       return {
@@ -526,6 +555,20 @@ export default {
         // 正常选中对应下标
         this.selectAnnotation(newVal);
       }
+    },
+    scrollSelectedThumbToCenter(index) {
+      this.$nextTick(() => {
+        // Vue2 下 this.$refs[`thumb-${index}`] 可能是数组（v-for）
+        const ref = this.$refs[`thumb-${index}`];
+        const el = Array.isArray(ref) ? ref[0] : ref;
+        if (!el || !el.scrollIntoView) return;
+
+        el.scrollIntoView({
+          behavior: "smooth", // 不想动画就改成 "auto"
+          block: "center",
+          inline: "nearest",
+        });
+      });
     },
     onCanvasSelection(e) {
       // 取得当前选中的对象
@@ -672,6 +715,7 @@ export default {
       this.undoStack = [];
       this.redoStack = [];
       this.displayImage(index);
+      this.scrollSelectedThumbToCenter(index);
     },
     getColorForText(text) {
       if (this.colorMap[text]) {
@@ -1127,6 +1171,7 @@ export default {
               });
               // 更新当前图片的注释数据
               this.$set(this.annotations, currentFileName, newAnnotations);
+              this.confidenceDisplayText = this.generateConfidenceDisplay();
               // 渲染注释到画布
               newAnnotations.forEach((annotation) => {
                 const left = annotation.relative.left * scaledWidth + imgLeft;
@@ -1224,9 +1269,17 @@ export default {
         this.canvas.off("mouse:down");
         this.canvas.off("mouse:move");
         this.canvas.off("mouse:up");
-        this.$message.info("描画がキャンセルされました。");
+        this.$message.info("描画がキャンセルされました");
       } else if (event.key === "Delete") {
         this.deleteSelectedRect();
+      } else if (event.key === "ArrowDown") {
+        if (this.currentImageIndex < this.images.length - 1) {
+          this.selectImage(this.currentImageIndex + 1);
+        }
+      } else if (event.key === "ArrowUp") {
+        if (this.currentImageIndex > 0) {
+          this.selectImage(this.currentImageIndex - 1);
+        }
       }
     },
     exportRectData() {
@@ -1369,5 +1422,18 @@ input[type="file"] {
 .canvas-scale-container {
   display: inline-block;
   overflow: auto;
+}
+.thumbnail.active img {
+  box-shadow: 0 0 0 6px #409eff, 0 0 12px rgba(64, 158, 255, 0.6);
+  border-radius: 6px;
+}
+.thumb-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+  padding: 6px 8px;
+  font-weight: 600;
+  border-bottom: 1px solid #eee;
 }
 </style>
