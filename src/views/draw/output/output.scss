@@ -1,0 +1,151 @@
+.el-row {
+  margin-bottom: 20px;
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+.el-col {
+  border-radius: 4px;
+}
+.bg-purple-dark {
+  background: #99a9bf;
+}
+.bg-purple {
+  background: #d3dce6;
+}
+.bg-purple-light {
+  background: #e5e9f2;
+}
+.grid-content {
+  border-radius: 4px;
+  min-height: 36px;
+}
+.row-bg {
+  padding: 10px 0;
+  background-color: #f9fafc;
+}
+#new-canvas {
+  border: 1px solid #ccc;
+}
+button {
+  margin-top: 10px;
+}
+input {
+  margin-top: 10px;
+  margin-right: 5px;
+  line-height: 20px;
+  padding: 5px;
+}
+.full-page-container {
+  padding: 20px; // 在元素内部四周创建20px的空间
+  box-sizing: border-box; // 确保元素的最终尺寸包括了 padding
+}
+.full-width-button {
+  width: 100%; /* 使按钮填满容器 */
+}
+.input-group {
+  margin-bottom: 20px; /* 在輸入組和畫布之間添加 20px 的間隙 */
+}
+.svg-icon {
+  margin-right: 10px; /* 右边距为10px */
+}
+.is-collapsed {
+  width: 50px; /* 或者你希望的折叠后的宽度 */
+  /* 其他样式调整 */
+}
+.my-custom-button-class {
+  margin-top: 0 !important;
+}
+::v-deep.pdf {
+  background: url("/svg/pdf.svg") no-repeat center center !important; 
+  display: inline-block;
+  width: 14px; /* 根据你的图标大小调整 */
+  height: 14px; /* 根据你的图标大小调整 */
+  background-size: contain !important;
+  vertical-align: middle;
+  margin-right: 8px; /* 按钮文本和图标之间的间距 */
+}
+::v-deep.signboard {
+  background: url("/svg/signboard.svg") no-repeat center center !important; 
+  display: inline-block;
+  width: 28px; /* 根据你的图标大小调整 */
+  height: 14px; /* 根据你的图标大小调整 */
+  background-size: contain !important;
+  vertical-align: middle;
+  margin-right: 8px; /* 按钮文本和图标之间的间距 */
+}
+::v-deep.fullSkylight {
+  background: url("/svg/fullSkylight.svg") no-repeat center center !important; 
+  display: inline-block;
+  width: 28px; /* 根据你的图标大小调整 */
+  height: 14px; /* 根据你的图标大小调整 */
+  background-size: contain !important;
+  vertical-align: middle;
+  margin-right: 8px; /* 按钮文本和图标之间的间距 */
+}
+::v-deep.telephonePole {
+  background: url("/svg/telephonePole.svg") no-repeat center center !important; 
+  display: inline-block;
+  width: 14px; /* 根据你的图标大小调整 */
+  height: 14px; /* 根据你的图标大小调整 */
+  background-size: contain !important;
+  vertical-align: middle;
+  margin-right: 8px; /* 按钮文本和图标之间的间距 */
+}
+::v-deep.cameraPole {
+  background: url("/svg/cameraPole.svg") no-repeat center center !important; 
+  display: inline-block;
+  width: 14px; /* 根据你的图标大小调整 */
+  height: 14px; /* 根据你的图标大小调整 */
+  background-size: contain !important;
+  vertical-align: middle;
+  margin-right: 8px; /* 按钮文本和图标之间的间距 */
+}
+::v-deep.paymentMachine {
+  background: url("/svg/paymentMachine.svg") no-repeat center center !important; 
+  display: inline-block;
+  width: 14px; /* 根据你的图标大小调整 */
+  height: 14px; /* 根据你的图标大小调整 */
+  background-size: contain !important;
+  vertical-align: middle;
+  margin-right: 8px; /* 按钮文本和图标之间的间距 */
+}
+::v-deep.iBarrierCar {
+  background: url("/svg/iBarrierCar.svg") no-repeat center center !important; 
+  display: inline-block;
+  width: 14px; /* 根据你的图标大小调整 */
+  height: 14px; /* 根据你的图标大小调整 */
+  background-size: contain !important;
+  vertical-align: middle;
+  margin-right: 8px; /* 按钮文本和图标之间的间距 */
+}
+::v-deep.uBarrierCar {
+  background: url("/svg/uBarrierCar.svg") no-repeat center center !important; 
+  display: inline-block;
+  width: 28px; /* 根据你的图标大小调整 */
+  height: 14px; /* 根据你的图标大小调整 */
+  background-size: contain !important;
+  vertical-align: middle;
+  margin-right: 8px; /* 按钮文本和图标之间的间距 */
+}
+::v-deep.lighting {
+  background: url("/svg/lighting.svg") no-repeat center center !important; 
+  display: inline-block;
+  width: 14px; /* 根据你的图标大小调整 */
+  height: 14px; /* 根据你的图标大小调整 */
+  background-size: contain !important;
+  vertical-align: middle;
+  margin-right: 8px; /* 按钮文本和图标之间的间距 */
+}
+::v-deep.controlBox {
+  background: url("/svg/controlBox.svg") no-repeat center center !important; 
+  display: inline-block;
+  width: 14px; /* 根据你的图标大小调整 */
+  height: 14px; /* 根据你的图标大小调整 */
+  background-size: contain !important;
+  vertical-align: middle;
+  margin-right: 8px; /* 按钮文本和图标之间的间距 */
+}
+::v-deep.custom-font-size-input .el-input-group__prepend {
+  font-size: 12px; 
+}
