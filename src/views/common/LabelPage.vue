@@ -1,0 +1,2291 @@
+﻿<template>
+  <el-container style="height: 90vh">
+    <el-aside width="200px" style="padding-top: 20px; overflow-y: auto">
+      <div class="thumb-header" v-if="images.length > 0">
+        {{ currentImageIndex + 1 }} / {{ images.length }}
+      </div>
+      <div v-if="thumbnails.length > 0" class="thumbnails-container">
+        <div
+          v-for="(thumbnail, index) in thumbnails"
+          :key="index"
+          class="thumbnail"
+          :class="[
+            { active: index === currentImageIndex },
+            getThumbnailStatusClass(fileNames[index]),
+          ]"
+          :ref="`thumb-${index}`"
+          @click="selectImage(index)"
+        >
+          <div
+            class="thumbnail-status"
+            :class="getThumbnailStatusClass(fileNames[index])"
+          >
+            {{ getThumbnailStatusLabel(fileNames[index]) }}
+          </div>
+          <img :src="thumbnail" alt="Thumbnail" class="thumbnail-img" />
+        </div>
+      </div>
+    </el-aside>
+    <el-main class="main">
+      <div class="labeler">
+        <div class="summary-panel">
+          <div v-if="currentImageName" class="summary-header">
+            <div class="summary-caption">{{ currentImageTitle }}</div>
+            <div class="current-image-name" :title="currentImageName">
+              {{ currentImageName }}
+            </div>
+          </div>
+          <div class="summary-group">
+            <div class="summary-group-title">{{ uploadSummaryTitle }}</div>
+            <div class="upload-tag-container">
+              <el-tag class="upload-stat-tag" size="medium" effect="plain" type="primary">
+                {{ imageCountTitle }} {{ displayImageUploadCount }} 件
+              </el-tag>
+              <el-tag
+                class="upload-stat-tag"
+                size="medium"
+                effect="plain"
+                :type="displayLabelUploadCount > 0 ? 'success' : 'info'"
+              >
+                {{ labelCountTitle }} {{ displayLabelUploadCount }} 件
+              </el-tag>
+              <el-tag class="upload-stat-tag" size="medium" effect="plain" type="warning">
+                {{ unmatchedLabelTitle }} {{ displayUnmatchedLabelCount }} 件
+              </el-tag>
+              <el-tag class="upload-stat-tag" size="medium" effect="plain" type="danger">
+                {{ unmatchedImageTitle }} {{ displayUnmatchedImageCount }} 件
+              </el-tag>
+            </div>
+          </div>
+          <div class="summary-divider"></div>
+          <div class="summary-group">
+            <div class="summary-group-title">{{ labelSummaryTitle }}</div>
+            <div
+              class="status-tag-container"
+              :class="{ 'has-abnormal': requiredAnnotationCount !== null }"
+            >
+              <el-tag
+                class="status-stat-tag is-clickable"
+                size="medium"
+                effect="plain"
+                type="info"
+                @click.native="jumpToNextStatusImage('empty')"
+              >
+                {{ emptyStatusTitle }} {{ displayEmptyStatusCount }} 件
+              </el-tag>
+              <el-tag
+                class="status-stat-tag is-clickable"
+                size="medium"
+                effect="plain"
+                type="primary"
+                @click.native="jumpToNextStatusImage('ai')"
+              >
+                {{ aiStatusTitle }} {{ displayAiStatusCount }} 件
+              </el-tag>
+              <el-tag
+                class="status-stat-tag is-clickable"
+                size="medium"
+                effect="plain"
+                type="success"
+                @click.native="jumpToNextStatusImage('modified')"
+              >
+                {{ modifiedStatusTitle }} {{ displayModifiedStatusCount }} 件
+              </el-tag>
+              <el-tag
+                v-if="requiredAnnotationCount !== null"
+                class="status-stat-tag is-clickable"
+                size="medium"
+                effect="plain"
+                type="danger"
+                @click.native="jumpToNextStatusImage('abnormal')"
+              >
+                {{ abnormalStatusTitle }} {{ displayAbnormalStatusCount }} 件
+              </el-tag>
+            </div>
+          </div>
+        </div>
+        <input
+          type="file"
+          ref="fileInput"
+          @change="uploadImages"
+          accept="image/*, .pdf"
+          multiple
+          webkitdirectory
+          style="display: none"
+        />
+        <input
+          type="file"
+          ref="annotationInput"
+          @change="uploadAnnotations"
+          accept=".txt"
+          multiple
+          webkitdirectory
+          style="display: none"
+        />
+        <div
+          class="canvas-viewport"
+          ref="canvasViewport"
+          :class="{
+            'is-panning': isPanning,
+            'is-pan-ready': isSpacePressed && !isDrawing && scaleFactor > 1,
+          }"
+          :style="canvasViewportStyle"
+          @wheel.prevent="handleWheel"
+        >
+          <div class="canvas-scale-container" :style="scaleStyle">
+            <canvas id="canvas"></canvas>
+          </div>
+        </div>
+      </div>
+    </el-main>
+    <el-aside width="200px" style="padding-top: 20px; overflow-y: auto">
+      <el-form>
+        <el-form-item>
+          <el-select
+            v-model="selectedText"
+            :placeholder="toolPanelSubtitle"
+            filterable
+          >
+            <el-option
+              v-for="option in options"
+              :key="option"
+              :label="option"
+              :value="option"
+            >
+            </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="startDrawingRect">
+            ラベルを追加
+          </el-button>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="danger" @click="deleteSelectedRect">
+            ラベルを削除
+          </el-button>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="success" @click="exportRectData">
+            ラベルを出力
+          </el-button>
+        </el-form-item>
+        <el-form-item>
+          <el-button
+            icon="el-icon-refresh-left"
+            @click="undo"
+            :disabled="undoStack.length === 0"
+          ></el-button>
+          <el-button
+            icon="el-icon-refresh-right"
+            @click="redo"
+            :disabled="redoStack.length === 0"
+          ></el-button>
+        </el-form-item>
+        <el-form-item>
+          <el-radio-group
+            v-model="selectedAnnoRadio"
+            class="annotation-radio-group"
+            @change="handleAnnoRadioChange"
+          >
+            <el-radio
+              v-for="(item, idx) in confidenceList"
+              :key="idx"
+              :label="idx"
+            >
+              {{ item.classText }}: {{ item.confText }}
+            </el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="countWarningVisible">
+          <el-alert
+            :title="countWarningText"
+            type="error"
+            show-icon
+            :closable="false"
+          />
+        </el-form-item>
+        <el-form-item>
+          <span class="annotation-count-text">
+            {{ annotationCountLabel }}: {{ confidenceList.length }} 件
+          </span>
+        </el-form-item>
+      </el-form>
+    </el-aside>
+  </el-container>
+</template>
+
+<script>
+import { fabric } from "fabric";
+import axios from "axios";
+import JSZip from "jszip";
+import { saveAs } from "file-saver";
+
+export default {
+  name: "LabelPage",
+  props: {
+    pageConfig: {
+      type: Object,
+      default: () => ({}),
+    },
+    initialImageFiles: {
+      type: Array,
+      default: () => [],
+    },
+    initialAnnotationFiles: {
+      type: Array,
+      default: () => [],
+    },
+    uploadSummary: {
+      type: Object,
+      default: () => ({}),
+    },
+  },
+  data() {
+    return {
+      canvas: null,
+      scaledImageSize: null,
+      selectedText: "",
+      colorMap: {},
+      isDrawing: false,
+      images: [],
+      thumbnails: [],
+      currentImageIndex: 0,
+      annotations: {},
+      fileNames: [],
+      imageRelativePaths: [],
+      confidenceDisplayText: "",
+      confidenceList: [],
+      selectedAnnoRadio: null,
+      scaleFactor: 1,
+      panX: 0,
+      panY: 0,
+      isSpacePressed: false,
+      isPanning: false,
+      isAnnotationPreviewHidden: false,
+      hiddenActiveObject: null,
+      panStartClientX: 0,
+      panStartClientY: 0,
+      panOriginX: 0,
+      panOriginY: 0,
+      undoStack: [],
+      redoStack: [],
+      annotationsLoaded: {},
+      annotationSources: {},
+      uploadedAnnotationFiles: {
+        exact: {},
+        base: {},
+      },
+      statusJumpPointers: {
+        empty: -1,
+        ai: -1,
+        modified: -1,
+        abnormal: -1,
+      },
+    };
+  },
+  mounted() {
+    this.initCanvas();
+    window.addEventListener("keydown", this.handleKeyDown);
+    window.addEventListener("keyup", this.handleKeyUp);
+    window.addEventListener("blur", this.handleWindowBlur);
+    window.addEventListener("mouseup", this.handleGlobalMouseUp);
+    window.addEventListener("beforeunload", this.handleBeforeUnload);
+    this.canvas.on("selection:created", (e) => this.onCanvasSelection(e));
+    this.canvas.on("selection:updated", (e) => this.onCanvasSelection(e));
+    this.canvas.on("selection:cleared", () => this.onCanvasSelectionCleared());
+    this.canvas.on("mouse:down", this.handleCanvasMouseDown);
+    this.canvas.on("mouse:move", this.handleCanvasMouseMove);
+    this.canvas.on("mouse:up", this.handleCanvasMouseUp);
+    this.initializeFromProps();
+  },
+  beforeDestroy() {
+    window.removeEventListener("keydown", this.handleKeyDown);
+    window.removeEventListener("keyup", this.handleKeyUp);
+    window.removeEventListener("blur", this.handleWindowBlur);
+    window.removeEventListener("mouseup", this.handleGlobalMouseUp);
+    window.removeEventListener("beforeunload", this.handleBeforeUnload);
+    if (this.canvas) {
+      this.canvas.off("mouse:down", this.handleCanvasMouseDown);
+      this.canvas.off("mouse:move", this.handleCanvasMouseMove);
+      this.canvas.off("mouse:up", this.handleCanvasMouseUp);
+    }
+  },
+  computed: {
+    options() {
+      return this.pageConfig.options || [];
+    },
+    classDictionary() {
+      return this.pageConfig.classDictionary || {};
+    },
+    uploadType() {
+      return this.pageConfig.uploadType || "three";
+    },
+    sortLocale() {
+      return this.pageConfig.sortLocale || "ja";
+    },
+    requiredAnnotationCount() {
+      return Number.isInteger(this.pageConfig.requiredAnnotationCount)
+        ? this.pageConfig.requiredAnnotationCount
+        : null;
+    },
+    keyboardCategoryShortcutCount() {
+      return Number.isInteger(this.pageConfig.keyboardCategoryShortcutCount)
+        ? this.pageConfig.keyboardCategoryShortcutCount
+        : 0;
+    },
+    countWarningVisible() {
+      return (
+        this.requiredAnnotationCount !== null &&
+        this.confidenceList.length !== this.requiredAnnotationCount
+      );
+    },
+    countWarningText() {
+      return this.pageConfig.countWarningText || "\u30e9\u30d9\u30eb\u6570\u7570\u5e38";
+    },
+    currentImageTitle() {
+      return "\u73fe\u5728\u306e\u753b\u50cf";
+    },
+    uploadSummaryTitle() {
+      return "\u30a2\u30c3\u30d7\u30ed\u30fc\u30c9\u72b6\u6cc1";
+    },
+    labelSummaryTitle() {
+      return "\u30e9\u30d9\u30eb\u72b6\u6cc1";
+    },
+    toolPanelSubtitle() {
+      return this.selectedText
+        ? `${this.selectedText}\u3092\u9078\u629e\u4e2d`
+        : "\u30ab\u30c6\u30b4\u30ea\u3092\u9078\u629e";
+    },
+    annotationListTitle() {
+      return "\u30e9\u30d9\u30eb\u4e00\u89a7";
+    },
+    annotationCountLabel() {
+      return "\u30e9\u30d9\u30eb\u6570";
+    },
+    imageCountTitle() {
+      return "\u753b\u50cf";
+    },
+    labelCountTitle() {
+      return "\u30e9\u30d9\u30eb";
+    },
+    unmatchedLabelTitle() {
+      return "\u672a\u30de\u30c3\u30c1\u30e9\u30d9\u30eb";
+    },
+    unmatchedImageTitle() {
+      return "\u672a\u30de\u30c3\u30c1\u753b\u50cf";
+    },
+    emptyStatusTitle() {
+      return "\u30e9\u30d9\u30eb\u306a\u3057";
+    },
+    aiStatusTitle() {
+      return "AI\u8a8d\u8b58";
+    },
+    modifiedStatusTitle() {
+      return "\u7de8\u96c6\u6e08\u307f";
+    },
+    abnormalStatusTitle() {
+      return "\u7570\u5e38";
+    },
+    displayImageUploadCount() {
+      return this.images.length || Number(this.uploadSummary.imageCount) || 0;
+    },
+    displayLabelUploadCount() {
+      return Number(this.uploadSummary.labelCount) || 0;
+    },
+    displayUnmatchedImageCount() {
+      return this.fileNames.filter((fileName, index) => {
+        return this.getUploadedAnnotationText(fileName, index) === null;
+      }).length;
+    },
+    displayUnmatchedLabelCount() {
+      return this.initialAnnotationFiles.filter((file) => {
+        return !this.doesAnnotationFileMatchAnyImage(file);
+      }).length;
+    },
+    displayEmptyStatusCount() {
+      return this.fileNames.filter((fileName) => {
+        return this.getThumbnailStatusKey(fileName) === "empty";
+      }).length;
+    },
+    displayAiStatusCount() {
+      return this.fileNames.filter((fileName) => {
+        return this.getThumbnailStatusKey(fileName) === "ai";
+      }).length;
+    },
+    displayModifiedStatusCount() {
+      return this.fileNames.filter((fileName) => {
+        return this.getThumbnailStatusKey(fileName) === "modified";
+      }).length;
+    },
+    displayAbnormalStatusCount() {
+      return this.fileNames.filter((fileName) => {
+        return this.getThumbnailStatusKey(fileName) === "abnormal";
+      }).length;
+    },
+    currentImageName() {
+      return this.fileNames[this.currentImageIndex] || "";
+    },
+    thumbnailStatusLabels() {
+      return {
+        ai: "AI\u8a8d\u8b58",
+        modified: "\u7de8\u96c6\u6e08\u307f",
+        empty: "\u30e9\u30d9\u30eb\u306a\u3057",
+        abnormal: "\u7570\u5e38",
+      };
+    },
+    canvasViewportStyle() {
+      if (!this.canvas) {
+        return {};
+      }
+      return {
+        width: `${this.canvas.getWidth()}px`,
+        height: `${this.canvas.getHeight()}px`,
+      };
+    },
+    scaleStyle() {
+      return {
+        transform: `translate(${this.panX}px, ${this.panY}px) scale(${this.scaleFactor})`,
+        transformOrigin: "0 0",
+      };
+    },
+  },
+  methods: {
+    unknownClassText(classId) {
+      return `\u672a\u77e5\u30af\u30e9\u30b9: ${classId}`;
+    },
+    handleBeforeUnload(event) {
+      if (this.fileNames.length === 0) {
+        return;
+      }
+      const message =
+        "\u3053\u306e\u30da\u30fc\u30b8\u3067\u30a2\u30c3\u30d7\u30ed\u30fc\u30c9\u3057\u305f\u30c7\u30fc\u30bf\u306f\u3001\u30d6\u30e9\u30a6\u30b6\u3092\u9589\u3058\u308b\u3068\u5931\u308f\u308c\u307e\u3059\u3002\u7d9a\u884c\u3057\u307e\u3059\u304b\uff1f";
+      event.preventDefault();
+      event.returnValue = message;
+      return message;
+    },
+    async initializeFromProps() {
+      if (this.initialAnnotationFiles.length > 0) {
+        await this.prepareInitialAnnotationFiles(this.initialAnnotationFiles);
+      }
+      if (this.initialImageFiles.length > 0) {
+        await this.loadImageFiles(this.initialImageFiles);
+      }
+    },
+    handleWheel(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.deltaY < 0) {
+        this.zoomIn();
+      } else {
+        this.zoomOut();
+      }
+    },
+    handleKeyUp(event) {
+      if (event.code === "Space") {
+        this.isSpacePressed = false;
+      }
+      if (event.key && event.key.toLowerCase() === "h") {
+        this.setAnnotationPreviewHidden(false);
+      }
+    },
+    handleWindowBlur() {
+      this.isSpacePressed = false;
+      this.stopPan();
+      this.setAnnotationPreviewHidden(false);
+    },
+    handleGlobalMouseUp() {
+      this.stopPan();
+    },
+    setAnnotationPreviewHidden(hidden) {
+      if (!this.canvas || this.isAnnotationPreviewHidden === hidden) {
+        return;
+      }
+      if (hidden) {
+        this.hiddenActiveObject = this.canvas.getActiveObject() || null;
+        this.canvas.discardActiveObject();
+      }
+      this.canvas.forEachObject((obj) => {
+        obj.visible = !hidden;
+      });
+      this.isAnnotationPreviewHidden = hidden;
+      if (
+        !hidden &&
+        this.hiddenActiveObject &&
+        this.canvas.getObjects().includes(this.hiddenActiveObject)
+      ) {
+        this.canvas.setActiveObject(this.hiddenActiveObject);
+      }
+      if (!hidden) {
+        this.hiddenActiveObject = null;
+      }
+      this.canvas.renderAll();
+    },
+    isEditableTarget(target) {
+      if (!target) {
+        return false;
+      }
+      const tagName = target.tagName;
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(tagName)) {
+        return true;
+      }
+      if (target.isContentEditable) {
+        return true;
+      }
+      return !!(target.closest && target.closest(".el-input, .el-textarea"));
+    },
+    getViewportSize() {
+      if (!this.canvas) {
+        return {
+          width: 0,
+          height: 0,
+        };
+      }
+      return {
+        width: this.canvas.getWidth(),
+        height: this.canvas.getHeight(),
+      };
+    },
+    clampPanPosition(nextX, nextY, scale = this.scaleFactor) {
+      if (scale <= 1) {
+        return {
+          x: 0,
+          y: 0,
+        };
+      }
+      const { width, height } = this.getViewportSize();
+      const minX = width - width * scale;
+      const minY = height - height * scale;
+      return {
+        x: Math.min(0, Math.max(minX, nextX)),
+        y: Math.min(0, Math.max(minY, nextY)),
+      };
+    },
+    applyPanConstraints() {
+      const clampedPan = this.clampPanPosition(this.panX, this.panY);
+      this.panX = clampedPan.x;
+      this.panY = clampedPan.y;
+    },
+    updateScale(nextScale) {
+      const clampedScale = Math.min(Math.max(nextScale, 1), 5);
+      if (!this.canvas) {
+        this.scaleFactor = clampedScale;
+        if (clampedScale <= 1) {
+          this.panX = 0;
+          this.panY = 0;
+        }
+        return;
+      }
+      const previousScale = this.scaleFactor;
+      const { width, height } = this.getViewportSize();
+      if (previousScale <= 0 || clampedScale === previousScale) {
+        this.scaleFactor = clampedScale;
+        this.applyPanConstraints();
+        return;
+      }
+      const viewportCenterX = width / 2;
+      const viewportCenterY = height / 2;
+      const contentCenterX = (viewportCenterX - this.panX) / previousScale;
+      const contentCenterY = (viewportCenterY - this.panY) / previousScale;
+      const nextPanX = viewportCenterX - contentCenterX * clampedScale;
+      const nextPanY = viewportCenterY - contentCenterY * clampedScale;
+      this.scaleFactor = clampedScale;
+      const clampedPan = this.clampPanPosition(nextPanX, nextPanY, clampedScale);
+      this.panX = clampedPan.x;
+      this.panY = clampedPan.y;
+    },
+    zoomIn() {
+      this.updateScale(this.scaleFactor + 0.1);
+    },
+    zoomOut() {
+      this.updateScale(this.scaleFactor - 0.1);
+    },
+    resetZoom() {
+      this.updateScale(1);
+      this.panX = 0;
+      this.panY = 0;
+    },
+    selectCategoryByOffset(offset) {
+      if (!this.options.length) {
+        return;
+      }
+      const currentIndex = this.options.indexOf(this.selectedText);
+      if (currentIndex === -1) {
+        this.selectedText = offset > 0 ? this.options[0] : this.options[this.options.length - 1];
+        return;
+      }
+      const nextIndex =
+        (currentIndex + offset + this.options.length) % this.options.length;
+      this.selectedText = this.options[nextIndex];
+    },
+    selectCategoryByShortcut(index) {
+      if (index >= 0 && index < this.options.length) {
+        this.selectedText = this.options[index];
+      }
+    },
+    isPointerInsideImage(pointer) {
+      const img = this.canvas && this.canvas.backgroundImage;
+      if (!img) {
+        return false;
+      }
+      const left = img.left;
+      const top = img.top;
+      const right = img.left + img.getScaledWidth();
+      const bottom = img.top + img.getScaledHeight();
+      return (
+        pointer.x >= left &&
+        pointer.x <= right &&
+        pointer.y >= top &&
+        pointer.y <= bottom
+      );
+    },
+    startPan(clientX, clientY) {
+      this.isPanning = true;
+      this.panStartClientX = clientX;
+      this.panStartClientY = clientY;
+      this.panOriginX = this.panX;
+      this.panOriginY = this.panY;
+    },
+    stopPan() {
+      this.isPanning = false;
+    },
+    handleCanvasMouseDown(option) {
+      if (
+        this.isDrawing ||
+        !this.canvas ||
+        this.images.length === 0 ||
+        this.scaleFactor <= 1
+      ) {
+        return;
+      }
+      if (!this.isSpacePressed) {
+        return;
+      }
+      this.startPan(option.e.clientX, option.e.clientY);
+      option.e.preventDefault();
+      option.e.stopPropagation();
+    },
+    handleCanvasMouseMove(option) {
+      if (!this.isPanning) {
+        return;
+      }
+      const deltaX = option.e.clientX - this.panStartClientX;
+      const deltaY = option.e.clientY - this.panStartClientY;
+      const clampedPan = this.clampPanPosition(
+        this.panOriginX + deltaX,
+        this.panOriginY + deltaY
+      );
+      this.panX = clampedPan.x;
+      this.panY = clampedPan.y;
+      option.e.preventDefault();
+      option.e.stopPropagation();
+    },
+    handleCanvasMouseUp() {
+      this.stopPan();
+    },
+    handleAnnoRadioChange(newVal) {
+      if (newVal === null) {
+        this.canvas.discardActiveObject();
+        this.canvas.renderAll();
+      } else {
+        this.selectAnnotation(newVal);
+      }
+    },
+    scrollSelectedThumbToCenter(index) {
+      this.$nextTick(() => {
+        const ref = this.$refs[`thumb-${index}`];
+        const el = Array.isArray(ref) ? ref[0] : ref;
+        if (!el || !el.scrollIntoView) return;
+
+        el.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+          inline: "nearest",
+        });
+      });
+    },
+    onCanvasSelection(e) {
+      const activeObj = e.selected && e.selected[0];
+      if (!activeObj || activeObj.type !== "group") return;
+      const currentFileName = this.fileNames[this.currentImageIndex];
+      const currentAnnotations = this.annotations[currentFileName] || [];
+      const foundIndex = currentAnnotations.findIndex(
+        (a) => a.fabricGroup === activeObj
+      );
+      if (foundIndex !== -1) {
+        this.selectedAnnoRadio = foundIndex;
+      }
+    },
+    onCanvasSelectionCleared() {
+      this.selectedAnnoRadio = null;
+    },
+    generateConfidenceDisplay() {
+      const currentFileName = this.fileNames[this.currentImageIndex];
+      const currentAnnotations = this.annotations[currentFileName] || [];
+      const str = currentAnnotations
+        .map((item) => {
+          const classText =
+            this.classDictionary[item.class] || this.unknownClassText(item.class);
+          const confText =
+            item.conf === 0 || item.conf ? item.conf.toFixed(2) : "N/A";
+          return `"${classText}": "${confText}"`;
+        })
+        .join("\n");
+      const list = currentAnnotations.map((item, idx) => {
+        const classText =
+          this.classDictionary[item.class] || this.unknownClassText(item.class);
+        const confText =
+          item.conf === 0 || item.conf ? item.conf.toFixed(2) : "N/A";
+        return {
+          index: idx,
+          classText: classText,
+          confText: confText,
+        };
+      });
+      this.confidenceList = list;
+      return str;
+    },
+    triggerFileUpload() {
+      this.$refs.fileInput.click();
+    },
+    triggerAnnotationUpload() {
+      this.$refs.annotationInput.click();
+    },
+    initCanvas() {
+      this.canvas = new fabric.Canvas("canvas");
+      this.resizeCanvas();
+      this.canvas.selection = false;
+      this.canvas.hoverCursor = "pointer";
+      this.canvas.backgroundColor = "lightgray";
+      this.canvas.renderAll();
+    },
+    resizeCanvas() {
+      const container = document.querySelector(".labeler");
+      this.canvas.setWidth(container.clientWidth * 0.8);
+      this.canvas.setHeight(window.innerHeight * 0.6);
+      this.canvas.renderAll();
+      this.applyPanConstraints();
+    },
+    clearCanvasAndData() {
+      this.canvas.clear();
+      this.scaledImageSize = null;
+      this.selectedAnnoRadio = null;
+      this.panX = 0;
+      this.panY = 0;
+      this.stopPan();
+    },
+    resetStatusJumpPointers() {
+      this.statusJumpPointers = {
+        empty: -1,
+        ai: -1,
+        modified: -1,
+        abnormal: -1,
+      };
+    },
+    refreshAnnotationSidebar() {
+      this.confidenceDisplayText = this.generateConfidenceDisplay();
+      if (this.confidenceList.length === 0) {
+        this.selectedAnnoRadio = null;
+      }
+    },
+    getAnnotationCount(fileName) {
+      const currentAnnotations = this.annotations[fileName];
+      return Array.isArray(currentAnnotations) ? currentAnnotations.length : 0;
+    },
+    hasAbnormalAnnotationCount(fileName) {
+      if (this.requiredAnnotationCount === null) {
+        return false;
+      }
+      const annotationCount = this.getAnnotationCount(fileName);
+      return (
+        annotationCount > 0 &&
+        annotationCount !== this.requiredAnnotationCount
+      );
+    },
+    getThumbnailStatusKey(fileName) {
+      const annotationCount = this.getAnnotationCount(fileName);
+      if (annotationCount === 0) {
+        return "empty";
+      }
+      if (this.hasAbnormalAnnotationCount(fileName)) {
+        return "abnormal";
+      }
+      if (this.annotationSources[fileName] === "server") {
+        return "ai";
+      }
+      return "modified";
+    },
+    getThumbnailStatusClass(fileName) {
+      return `status-${this.getThumbnailStatusKey(fileName)}`;
+    },
+    getThumbnailStatusLabel(fileName) {
+      const statusKey = this.getThumbnailStatusKey(fileName);
+      return this.thumbnailStatusLabels[statusKey];
+    },
+    clampUnitValue(value) {
+      return Math.min(1, Math.max(0, Number(value) || 0));
+    },
+    normalizeRelativeBox(relative) {
+      if (!relative) {
+        return null;
+      }
+      const rawLeft = Number(relative.left);
+      const rawTop = Number(relative.top);
+      const rawWidth = Number(relative.width);
+      const rawHeight = Number(relative.height);
+      if ([rawLeft, rawTop, rawWidth, rawHeight].some(Number.isNaN)) {
+        return null;
+      }
+      const left = this.clampUnitValue(rawLeft);
+      const top = this.clampUnitValue(rawTop);
+      const right = this.clampUnitValue(rawLeft + Math.max(0, rawWidth));
+      const bottom = this.clampUnitValue(rawTop + Math.max(0, rawHeight));
+      return {
+        left,
+        top,
+        width: Math.max(0, right - left),
+        height: Math.max(0, bottom - top),
+      };
+    },
+    getSafeExportMetrics(relative) {
+      const normalized = this.normalizeRelativeBox(relative);
+      if (!normalized || normalized.width <= 0 || normalized.height <= 0) {
+        return null;
+      }
+      const precision = 1000000;
+      const centerX = normalized.left + normalized.width / 2;
+      const centerY = normalized.top + normalized.height / 2;
+      const centerXInt = Math.min(
+        precision,
+        Math.max(0, Math.round(centerX * precision))
+      );
+      const centerYInt = Math.min(
+        precision,
+        Math.max(0, Math.round(centerY * precision))
+      );
+      let widthInt = Math.min(
+        precision,
+        Math.max(0, Math.round(normalized.width * precision))
+      );
+      let heightInt = Math.min(
+        precision,
+        Math.max(0, Math.round(normalized.height * precision))
+      );
+      widthInt = Math.min(
+        widthInt,
+        2 * Math.min(centerXInt, precision - centerXInt)
+      );
+      heightInt = Math.min(
+        heightInt,
+        2 * Math.min(centerYInt, precision - centerYInt)
+      );
+      return {
+        centerX: (centerXInt / precision).toFixed(6),
+        centerY: (centerYInt / precision).toFixed(6),
+        width: (widthInt / precision).toFixed(6),
+        height: (heightInt / precision).toFixed(6),
+      };
+    },
+    getImageIndexesByStatus(statusKey) {
+      return this.fileNames.reduce((matchedIndexes, fileName, index) => {
+        if (this.getThumbnailStatusKey(fileName) === statusKey) {
+          matchedIndexes.push(index);
+        }
+        return matchedIndexes;
+      }, []);
+    },
+    jumpToNextStatusImage(statusKey) {
+      const matchedIndexes = this.getImageIndexesByStatus(statusKey);
+      if (matchedIndexes.length === 0) {
+        return;
+      }
+      const currentPointer = Number.isInteger(this.statusJumpPointers[statusKey])
+        ? this.statusJumpPointers[statusKey]
+        : -1;
+      const nextPointer = (currentPointer + 1) % matchedIndexes.length;
+      this.$set(this.statusJumpPointers, statusKey, nextPointer);
+      this.selectImage(matchedIndexes[nextPointer]);
+    },
+    readFileAsDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    },
+    loadFabricImage(data) {
+      return new Promise((resolve) => {
+        fabric.Image.fromURL(data, (img) => resolve(img));
+      });
+    },
+    async prepareInitialAnnotationFiles(inputFiles) {
+      const files = Array.from(inputFiles || [])
+        .filter((file) => file.name.toLowerCase().endsWith(".txt"))
+        .sort((a, b) =>
+          (a.webkitRelativePath || a.name).localeCompare(
+            b.webkitRelativePath || b.name,
+            this.sortLocale,
+            {
+              numeric: true,
+              sensitivity: "base",
+            }
+          )
+        );
+      if (files.length === 0) {
+        this.uploadedAnnotationFiles = {
+          exact: {},
+          base: {},
+        };
+        return;
+      }
+      const results = await Promise.all(
+        files.map(
+          (file) =>
+            new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onload = (e) => {
+                resolve({
+                  imageName: this.getFileNameWithoutExt(file.name),
+                  relativePath: file.webkitRelativePath || file.name,
+                  content: e.target.result || "",
+                });
+              };
+              reader.onerror = () => resolve(null);
+              reader.readAsText(file);
+            })
+        )
+      );
+      const parsedMap = {
+        exact: {},
+        base: {},
+      };
+      results.filter(Boolean).forEach((item) => {
+        const exactKey = this.getMatchKeyWithoutExt(item.relativePath);
+        const baseKey = this.getMatchKeyWithoutExt(item.imageName);
+        parsedMap.exact[exactKey] = item.content;
+        if (!Object.prototype.hasOwnProperty.call(parsedMap.base, baseKey)) {
+          parsedMap.base[baseKey] = item.content;
+        }
+      });
+      this.uploadedAnnotationFiles = parsedMap;
+      this.annotationsLoaded = {};
+    },
+    async loadImageFiles(inputFiles) {
+      this.clearCanvasAndData();
+      this.resetStatusJumpPointers();
+      this.images = [];
+      this.thumbnails = [];
+      this.annotations = {};
+      this.fileNames = [];
+      this.imageRelativePaths = [];
+      this.currentImageIndex = 0;
+      this.undoStack = [];
+      this.redoStack = [];
+      this.annotationsLoaded = {};
+      this.annotationSources = {};
+      const files = Array.from(inputFiles || [])
+        .filter((file) => file.type.startsWith("image/"))
+        .sort((a, b) =>
+          (a.webkitRelativePath || a.name).localeCompare(
+            b.webkitRelativePath || b.name,
+            this.sortLocale,
+            {
+              numeric: true,
+              sensitivity: "base",
+            }
+          )
+        );
+      if (files.length === 0) {
+        this.$message.warning("\u5229\u7528\u53ef\u80fd\u306a\u753b\u50cf\u30d5\u30a1\u30a4\u30eb\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3002");
+        return;
+      }
+      const loadedImages = await Promise.all(
+        files.map(async (file) => {
+          const data = await this.readFileAsDataURL(file);
+          const [img, thumbnail] = await Promise.all([
+            this.loadFabricImage(data),
+            this.createThumbnail(data),
+          ]);
+          return {
+            name: file.name,
+            relativePath: file.webkitRelativePath || file.name,
+            img,
+            thumbnail,
+          };
+        })
+      );
+      this.images = loadedImages.map((item) => item.img);
+      this.thumbnails = loadedImages.map((item) => item.thumbnail);
+      this.fileNames = loadedImages.map((item) => item.name);
+      this.imageRelativePaths = loadedImages.map((item) => item.relativePath);
+      loadedImages.forEach((item, index) => {
+        const uploadedAnnotations = this.getUploadedAnnotationsForImage(
+          item.name,
+          index
+        );
+        this.$set(this.annotations, item.name, uploadedAnnotations || []);
+        if (uploadedAnnotations) {
+          this.$set(this.annotationSources, item.name, "local");
+          this.annotationsLoaded[item.name] = true;
+        }
+      });
+      this.displayImage(0);
+    },
+    async uploadImages(event) {
+      await this.loadImageFiles(event.target.files || []);
+    },
+    async loadAnnotationFiles(inputFiles, { showMessage = true } = {}) {
+      const files = Array.from(inputFiles || [])
+        .filter((file) => file.name.toLowerCase().endsWith(".txt"))
+        .sort((a, b) =>
+          (a.webkitRelativePath || a.name).localeCompare(
+            b.webkitRelativePath || b.name,
+            this.sortLocale,
+            {
+              numeric: true,
+              sensitivity: "base",
+            }
+          )
+        );
+      if (files.length === 0) {
+        this.uploadedAnnotationFiles = {
+          exact: {},
+          base: {},
+        };
+        this.$message.warning("\u5229\u7528\u53ef\u80fd\u306a\u30e9\u30d9\u30eb\u30c6\u30ad\u30b9\u30c8\u30d5\u30a1\u30a4\u30eb\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3002");
+        return;
+      }
+      const tasks = files.map(
+        (file) =>
+          new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              resolve({
+                imageName: this.getFileNameWithoutExt(file.name),
+                relativePath: file.webkitRelativePath || file.name,
+                content: e.target.result || "",
+              });
+            };
+            reader.onerror = () => resolve(null);
+            reader.readAsText(file);
+          })
+      );
+      Promise.all(tasks).then((results) => {
+        const parsedMap = {
+          exact: {},
+          base: {},
+        };
+        results.filter(Boolean).forEach((item) => {
+          const exactKey = this.getMatchKeyWithoutExt(item.relativePath);
+          const baseKey = this.getMatchKeyWithoutExt(item.imageName);
+          parsedMap.exact[exactKey] = item.content;
+          if (!Object.prototype.hasOwnProperty.call(parsedMap.base, baseKey)) {
+            parsedMap.base[baseKey] = item.content;
+          }
+        });
+        this.uploadedAnnotationFiles = parsedMap;
+        this.annotationsLoaded = {};
+        this.rebuildAnnotationsFromUploads();
+        const imageCount = this.fileNames.length;
+        const matchedCount = this.fileNames.filter((fileName, index) =>
+          this.getUploadedAnnotationsForImage(fileName, index) !== null
+        ).length;
+        this.$message.success(
+          `\u30e9\u30d9\u30eb\u30d5\u30a1\u30a4\u30eb ${Object.keys(parsedMap.exact).length} \u4ef6\u3001\u753b\u50cf ${imageCount} \u679a\u3001\u30de\u30c3\u30c1 ${matchedCount} \u679a`
+        );
+      });
+    },
+    async uploadAnnotations(event) {
+      await this.loadAnnotationFiles(event.target.files || []);
+    },
+    getFileNameWithoutExt(fileName) {
+      const lastDotIndex = fileName.lastIndexOf(".");
+      return lastDotIndex === -1 ? fileName : fileName.slice(0, lastDotIndex);
+    },
+    getMatchKeyWithoutExt(filePath) {
+      const normalizedPath = String(filePath || "").replace(/\\/g, "/");
+      return this.getFileNameWithoutExt(normalizedPath).toLowerCase();
+    },
+    doesAnnotationFileMatchAnyImage(file) {
+      const annotationExactKey = this.getMatchKeyWithoutExt(
+        file.webkitRelativePath || file.name
+      );
+      const annotationBaseKey = this.getMatchKeyWithoutExt(
+        this.getFileNameWithoutExt(file.name)
+      );
+      return this.fileNames.some((fileName, index) => {
+        const imageRelativePath = this.imageRelativePaths[index] || fileName;
+        const imageExactKey = this.getMatchKeyWithoutExt(imageRelativePath);
+        const imageBaseKey = this.getMatchKeyWithoutExt(fileName);
+        return (
+          imageExactKey === annotationExactKey ||
+          imageBaseKey === annotationBaseKey
+        );
+      });
+    },
+    rebuildAnnotationsFromUploads() {
+      this.fileNames.forEach((fileName, index) => {
+        const parsedAnnotations = this.getUploadedAnnotationsForImage(
+          fileName,
+          index
+        );
+        if (parsedAnnotations) {
+          this.$set(this.annotations, fileName, parsedAnnotations);
+          this.$set(this.annotationSources, fileName, "local");
+          this.annotationsLoaded[fileName] = true;
+        } else if (this.annotationSources[fileName] === "local") {
+          this.$set(this.annotations, fileName, []);
+          this.$delete(this.annotationSources, fileName);
+          this.annotationsLoaded[fileName] = false;
+        }
+      });
+      if (this.images.length > 0) {
+        this.displayImage(this.currentImageIndex || 0);
+      }
+    },
+    getUploadedAnnotationText(fileName, imageIndex = this.currentImageIndex) {
+      const relativePath = this.imageRelativePaths[imageIndex] || fileName;
+      const exactKey = this.getMatchKeyWithoutExt(relativePath);
+      const baseKey = this.getMatchKeyWithoutExt(fileName);
+      if (
+        Object.prototype.hasOwnProperty.call(
+          this.uploadedAnnotationFiles.exact,
+          exactKey
+        )
+      ) {
+        return this.uploadedAnnotationFiles.exact[exactKey];
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(
+          this.uploadedAnnotationFiles.base,
+          baseKey
+        )
+      ) {
+        return this.uploadedAnnotationFiles.base[baseKey];
+      }
+      return null;
+    },
+    getUploadedAnnotationsForImage(
+      fileName,
+      imageIndex = this.currentImageIndex
+    ) {
+      const annotationText = this.getUploadedAnnotationText(fileName, imageIndex);
+      if (annotationText === null || annotationText === undefined) {
+        return null;
+      }
+      return this.parseAnnotationText(annotationText);
+    },
+    parseAnnotationText(content) {
+      const lines = (content || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      return lines
+        .map((line) => this.parseAnnotationLine(line))
+        .filter(Boolean);
+    },
+    parseAnnotationLine(line) {
+      const parts = line.split(/\s+/);
+      if (parts.length < 5) {
+        return null;
+      }
+      const classId = parts[0];
+      const centerX = parseFloat(parts[1]);
+      const centerY = parseFloat(parts[2]);
+      const width = parseFloat(parts[3]);
+      const height = parseFloat(parts[4]);
+      if (
+        [centerX, centerY, width, height].some((value) => Number.isNaN(value))
+      ) {
+        return null;
+      }
+      const left = centerX - width / 2;
+      const top = centerY - height / 2;
+      const text = this.classDictionary[classId] || this.unknownClassText(classId);
+      const normalizedRelative = this.normalizeRelativeBox({
+        left,
+        top,
+        width,
+        height,
+      });
+      if (
+        !normalizedRelative ||
+        normalizedRelative.width <= 0 ||
+        normalizedRelative.height <= 0
+      ) {
+        return null;
+      }
+      return {
+        text,
+        class: classId,
+        relative: normalizedRelative,
+        fill: this.getColorForText(text),
+      };
+    },
+    createThumbnail(data) {
+      return new Promise((resolve) => {
+        const thumbnail = new Image();
+        thumbnail.src = data;
+        thumbnail.onload = () => {
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
+          canvas.width = 100;
+          canvas.height = 100;
+          ctx.drawImage(thumbnail, 0, 0, 100, 100);
+          resolve(canvas.toDataURL());
+        };
+      });
+    },
+    displayImage(index) {
+      this.clearCanvasAndData();
+      const img = this.images[index];
+      const canvasWidth = this.canvas.getWidth();
+      const canvasHeight = this.canvas.getHeight();
+      const scaleFactor = canvasWidth / img.width;
+      const scaledHeight = img.height * scaleFactor;
+      if (scaledHeight > canvasHeight) {
+        const heightScaleFactor = canvasHeight / img.height;
+        img.scaleToHeight(canvasHeight);
+        img.scaleToWidth(img.width * heightScaleFactor);
+      } else {
+        img.scaleToWidth(canvasWidth);
+      }
+      this.canvas.setBackgroundImage(
+        img,
+        this.canvas.renderAll.bind(this.canvas),
+        {
+          left: (canvasWidth - img.getScaledWidth()) / 2,
+          top: (canvasHeight - img.getScaledHeight()) / 2,
+          originX: "left",
+          originY: "top",
+          scaleX: img.scaleX,
+          scaleY: img.scaleY,
+          selectable: false,
+          hasControls: false,
+          evented: false,
+        }
+      );
+      this.scaledImageSize = {
+        width: img.getScaledWidth(),
+        height: img.getScaledHeight(),
+      };
+      this.canvas.renderAll();
+      this.applyPanConstraints();
+      this.currentImageIndex = index;
+      this.refreshAnnotationSidebar();
+      this.restoreAnnotations();
+    },
+    selectImage(index) {
+      this.undoStack = [];
+      this.redoStack = [];
+      this.displayImage(index);
+      this.scrollSelectedThumbToCenter(index);
+    },
+    getColorForText(text) {
+      if (this.colorMap[text]) {
+        return this.colorMap[text];
+      }
+      let randomColor = Math.floor(Math.random() * 16777215)
+        .toString(16)
+        .padStart(6, "0");
+      const adjustColor = (hex) => {
+        const value = parseInt(hex, 16);
+        return Math.max(value, 100);
+      };
+      const r = adjustColor(randomColor.slice(0, 2))
+        .toString(16)
+        .padStart(2, "0");
+      const g = adjustColor(randomColor.slice(2, 4))
+        .toString(16)
+        .padStart(2, "0");
+      const b = adjustColor(randomColor.slice(4, 6))
+        .toString(16)
+        .padStart(2, "0");
+      const newColor = `rgba(${parseInt(r, 16)}, ${parseInt(g, 16)}, ${parseInt(
+        b,
+        16
+      )}, 0.5)`;
+      this.colorMap[text] = newColor;
+      return newColor;
+    },
+    clampPointerToImage(pointer) {
+      const img = this.canvas.backgroundImage;
+      if (!img) return pointer;
+      const left = img.left;
+      const top = img.top;
+      const right = img.left + img.getScaledWidth();
+      const bottom = img.top + img.getScaledHeight();
+      return {
+        x: Math.min(Math.max(pointer.x, left), right),
+        y: Math.min(Math.max(pointer.y, top), bottom),
+      };
+    },
+    startDrawingRect() {
+      if (this.isDrawing) {
+        this.$message.error(
+          "\u63cf\u753b\u4e2d\u3067\u3059\u3002\u73fe\u5728\u306e\u63cf\u753b\u304c\u5b8c\u4e86\u3057\u3066\u304b\u3089\u65b0\u3057\u3044\u30e9\u30d9\u30eb\u3092\u958b\u59cb\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+        );
+        return;
+      }
+      if (!this.selectedText) {
+        this.$message.error(
+          "\u307e\u305a\u30ab\u30c6\u30b4\u30ea\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+        );
+        return;
+      }
+      if (!this.canvas || !this.canvas.backgroundImage) {
+        this.$message.error(
+          "\u5148\u306b\u753b\u50cf\u307e\u305f\u306f PDF \u30da\u30fc\u30b8\u3092\u8868\u793a\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+        );
+        return;
+      }
+
+      this.isDrawing = true;
+
+      this.canvas.selection = false;
+      this.canvas.discardActiveObject();
+      this.canvas.forEachObject((obj) => {
+        obj.selectable = false;
+        obj.hasControls = false;
+        obj.hoverCursor = "crosshair";
+        obj.moveCursor = "crosshair";
+      });
+      this.canvas.defaultCursor = "crosshair";
+      this.canvas.renderAll();
+
+      let rect = null;
+      let origX = 0;
+      let origY = 0;
+
+      const strokeColor = this.getColorForText(this.selectedText);
+      const fillColor = "rgba(144,238,144, 0.5)";
+
+      const cleanupDrawingMode = () => {
+        this.isDrawing = false;
+        this.canvas.defaultCursor = "default";
+        this.canvas.selection = true;
+
+        this.canvas.forEachObject((obj) => {
+          obj.selectable = true;
+          obj.hasControls = false;
+          obj.hoverCursor = "move";
+          obj.moveCursor = "move";
+        });
+
+        this.canvas.off("mouse:down", onMouseDown);
+        this.canvas.off("mouse:move", onMouseMove);
+        this.canvas.off("mouse:up", onMouseUp);
+
+        this.canvas.renderAll();
+      };
+
+      const onMouseDown = (o) => {
+        let pointer = this.canvas.getPointer(o.e);
+        pointer = this.clampPointerToImage(pointer);
+
+        origX = pointer.x;
+        origY = pointer.y;
+
+        rect = new fabric.Rect({
+          left: origX,
+          top: origY,
+          originX: "left",
+          originY: "top",
+          width: 0,
+          height: 0,
+          angle: 0,
+          fill: fillColor,
+          stroke: strokeColor,
+          strokeWidth: 5,
+          selectable: false,
+          evented: false,
+        });
+
+        this.canvas.add(rect);
+      };
+
+      const onMouseMove = (o) => {
+        if (!rect) return;
+
+        let pointer = this.canvas.getPointer(o.e);
+        pointer = this.clampPointerToImage(pointer);
+
+        const x1 = origX;
+        const y1 = origY;
+        const x2 = pointer.x;
+        const y2 = pointer.y;
+
+        const left = Math.min(x1, x2);
+        const top = Math.min(y1, y2);
+        const width = Math.abs(x2 - x1);
+        const height = Math.abs(y2 - y1);
+
+        rect.set({ left, top, width, height });
+        this.canvas.renderAll();
+      };
+
+      const onMouseUp = () => {
+        if (!rect) {
+          cleanupDrawingMode();
+          return;
+        }
+
+        const img = this.canvas.backgroundImage;
+        if (img) {
+          const minL = img.left;
+          const minT = img.top;
+          const maxR = img.left + img.getScaledWidth();
+          const maxB = img.top + img.getScaledHeight();
+
+          const r = rect.left + rect.width;
+          const b = rect.top + rect.height;
+
+          const newL = Math.min(Math.max(rect.left, minL), maxR);
+          const newT = Math.min(Math.max(rect.top, minT), maxB);
+          const newR = Math.min(Math.max(r, minL), maxR);
+          const newB = Math.min(Math.max(b, minT), maxB);
+
+          rect.set({
+            left: newL,
+            top: newT,
+            width: Math.max(0, newR - newL),
+            height: Math.max(0, newB - newT),
+          });
+        }
+
+        if (rect.width < 5 || rect.height < 5) {
+          this.canvas.remove(rect);
+          rect = null;
+          this.$message.info(
+            "\u30e9\u30d9\u30eb\u304c\u5c0f\u3055\u3059\u304e\u308b\u305f\u3081\u30ad\u30e3\u30f3\u30bb\u30eb\u3057\u307e\u3057\u305f\u3002"
+          );
+          cleanupDrawingMode();
+          return;
+        }
+
+        const textObj = new fabric.Text(this.selectedText, {
+          left: rect.left + rect.width / 20,
+          top: rect.top + rect.height / 20,
+          originX: "left",
+          originY: "top",
+          fontSize: 20,
+          fill: "#000",
+          selectable: false,
+          evented: false,
+        });
+
+        this.canvas.remove(rect);
+
+        const group = new fabric.Group([rect, textObj], {
+          left: rect.left,
+          top: rect.top,
+          selectable: true,
+          hasControls: false,
+          lockMovementX: true,
+          lockMovementY: true,
+        });
+
+        this.canvas.add(group);
+
+        this.saveAnnotation(group);
+
+        const currentFileName = this.fileNames[this.currentImageIndex];
+        const annotationList = this.annotations[currentFileName] || [];
+        const newAnno = annotationList[annotationList.length - 1];
+        if (newAnno) {
+          this.undoStack.push({
+            type: "add",
+            fileName: currentFileName,
+            annotation: newAnno,
+          });
+          this.redoStack = [];
+        }
+
+        cleanupDrawingMode();
+      };
+
+      this.canvas.on("mouse:down", onMouseDown);
+      this.canvas.on("mouse:move", onMouseMove);
+      this.canvas.on("mouse:up", onMouseUp);
+    },
+    deleteSelectedRect() {
+      const activeObject = this.canvas.getActiveObject();
+      if (activeObject && activeObject.type === "group") {
+        const rect = activeObject.item(0);
+        const text = activeObject.item(1);
+        const img = this.canvas.backgroundImage;
+        const relativeLeft =
+          (activeObject.left - img.left) / img.getScaledWidth();
+        const relativeTop =
+          (activeObject.top - img.top) / img.getScaledHeight();
+        const relativeWidth = (rect.width * rect.scaleX) / img.getScaledWidth();
+        const relativeHeight =
+          (rect.height * rect.scaleY) / img.getScaledHeight();
+        const normalizedRelative = this.normalizeRelativeBox({
+          left: relativeLeft,
+          top: relativeTop,
+          width: relativeWidth,
+          height: relativeHeight,
+        });
+        const currentFileName = this.fileNames[this.currentImageIndex];
+        const annotationIndex = this.annotations[
+          currentFileName
+        ]?.findIndex((annotation) => {
+          return (
+            normalizedRelative &&
+            Math.abs(annotation.relative.left - normalizedRelative.left) < 0.001 &&
+            Math.abs(annotation.relative.top - normalizedRelative.top) < 0.001 &&
+            Math.abs(annotation.relative.width - normalizedRelative.width) < 0.001 &&
+            Math.abs(annotation.relative.height - normalizedRelative.height) < 0.001 &&
+            annotation.text === text.text
+          );
+        });
+        if (annotationIndex !== -1) {
+          const removed = this.annotations[currentFileName][annotationIndex];
+          this.undoStack.push({
+            type: "delete",
+            fileName: currentFileName,
+            annotation: removed,
+          });
+          this.redoStack = [];
+          this.annotations[currentFileName].splice(annotationIndex, 1);
+          this.$set(this.annotationSources, currentFileName, "manual");
+          this.canvas.remove(activeObject);
+          this.$message.success(
+            "\u9078\u629e\u3055\u308c\u305f\u30e9\u30d9\u30eb\u3092\u524a\u9664\u3057\u307e\u3057\u305f\u3002"
+          );
+        }
+      } else {
+        this.$message.warning(
+          "\u9078\u629e\u3055\u308c\u305f\u30e9\u30d9\u30eb\u304c\u3042\u308a\u307e\u305b\u3093\u3002"
+        );
+      }
+      this.refreshAnnotationSidebar();
+    },
+    undo() {
+      if (this.undoStack.length === 0) {
+        this.$message.info(
+          "\u3053\u308c\u4ee5\u4e0a\u3001\u53d6\u308a\u6d88\u3059\u64cd\u4f5c\u306f\u3042\u308a\u307e\u305b\u3093\u3002"
+        );
+        return;
+      }
+      const lastAction = this.undoStack.pop();
+      this.redoStack.push(lastAction);
+      if (lastAction.type === "add") {
+        const { fileName, annotation } = lastAction;
+        const annoArr = this.annotations[fileName];
+        if (annoArr) {
+          const idx = annoArr.indexOf(annotation);
+          if (idx !== -1) {
+            annoArr.splice(idx, 1);
+            this.$set(this.annotationSources, fileName, "manual");
+            if (annotation.fabricGroup) {
+              this.canvas.remove(annotation.fabricGroup);
+            }
+          }
+        }
+      } else if (lastAction.type === "delete") {
+        const { fileName, annotation } = lastAction;
+        if (!this.annotations[fileName]) {
+          this.annotations[fileName] = [];
+        }
+        this.annotations[fileName].push(annotation);
+        this.$set(this.annotationSources, fileName, "manual");
+        if (annotation.fabricGroup) {
+          this.canvas.add(annotation.fabricGroup);
+        }
+      }
+      this.canvas.renderAll();
+      this.refreshAnnotationSidebar();
+    },
+    redo() {
+      if (this.redoStack.length === 0) {
+        this.$message.info(
+          "\u3053\u308c\u4ee5\u4e0a\u3001\u3084\u308a\u76f4\u3059\u64cd\u4f5c\u306f\u3042\u308a\u307e\u305b\u3093\u3002"
+        );
+        return;
+      }
+      const action = this.redoStack.pop();
+      this.undoStack.push(action);
+      if (action.type === "add") {
+        const { fileName, annotation } = action;
+        if (!this.annotations[fileName]) {
+          this.annotations[fileName] = [];
+        }
+        this.annotations[fileName].push(annotation);
+        this.$set(this.annotationSources, fileName, "manual");
+        if (annotation.fabricGroup) {
+          this.canvas.add(annotation.fabricGroup);
+        }
+      } else if (action.type === "delete") {
+        const { fileName, annotation } = action;
+        const annoArr = this.annotations[fileName];
+        if (annoArr) {
+          const idx = annoArr.indexOf(annotation);
+          if (idx !== -1) {
+            annoArr.splice(idx, 1);
+            this.$set(this.annotationSources, fileName, "manual");
+            if (annotation.fabricGroup) {
+              this.canvas.remove(annotation.fabricGroup);
+            }
+          }
+        }
+      }
+      this.canvas.renderAll();
+      this.refreshAnnotationSidebar();
+    },
+    saveAnnotation(group) {
+      const rect = group.item(0);
+      const text = group.item(1).text;
+      const img = this.canvas.backgroundImage;
+      const relativeLeft = (group.left - img.left) / img.getScaledWidth();
+      const relativeTop = (group.top - img.top) / img.getScaledHeight();
+      const relativeWidth = (rect.width * rect.scaleX) / img.getScaledWidth();
+      const relativeHeight =
+        (rect.height * rect.scaleY) / img.getScaledHeight();
+      const normalizedRelative = this.normalizeRelativeBox({
+        left: relativeLeft,
+        top: relativeTop,
+        width: relativeWidth,
+        height: relativeHeight,
+      });
+      if (
+        !normalizedRelative ||
+        normalizedRelative.width <= 0 ||
+        normalizedRelative.height <= 0
+      ) {
+        return;
+      }
+      const classKey = Object.keys(this.classDictionary).find(
+        (key) => this.classDictionary[key] === text
+      );
+      const annotationData = {
+        text: group.item(1).text,
+        class: classKey || null,
+        relative: normalizedRelative,
+        fill: rect.stroke || rect.fill,
+        fabricGroup: group,
+      };
+      group.visible = !this.isAnnotationPreviewHidden;
+      const currentFileName = this.fileNames[this.currentImageIndex];
+      if (!this.annotations[currentFileName]) {
+        this.annotations[currentFileName] = [];
+      }
+      this.annotations[currentFileName].push(annotationData);
+      this.$set(this.annotationSources, currentFileName, "manual");
+      this.refreshAnnotationSidebar();
+    },
+    buildFabricAnnotation(annotation, img) {
+      const normalizedRelative = this.normalizeRelativeBox(annotation.relative);
+      if (
+        !normalizedRelative ||
+        normalizedRelative.width <= 0 ||
+        normalizedRelative.height <= 0
+      ) {
+        return null;
+      }
+      annotation.relative = normalizedRelative;
+      const scaledWidth = img.getScaledWidth();
+      const scaledHeight = img.getScaledHeight();
+      const imgLeft = img.left || 0;
+      const imgTop = img.top || 0;
+      const left = normalizedRelative.left * scaledWidth + imgLeft;
+      const top = normalizedRelative.top * scaledHeight + imgTop;
+      const width = normalizedRelative.width * scaledWidth;
+      const height = normalizedRelative.height * scaledHeight;
+      if (width <= 0 || height <= 0) {
+        return null;
+      }
+      const rect = new fabric.Rect({
+        left,
+        top,
+        width,
+        height,
+        fill: "rgba(144,238,144, 0.5)",
+        stroke: annotation.fill,
+        strokeWidth: 5,
+      });
+      const text = new fabric.Text(annotation.text, {
+        left: left + width / 20,
+        top: top + height / 20,
+        originX: "left",
+        originY: "top",
+        fontSize: 20,
+        fill: "#000",
+      });
+      const group = new fabric.Group([rect, text], {
+        left,
+        top,
+        selectable: true,
+        hasControls: false,
+        lockMovementX: true,
+        lockMovementY: true,
+      });
+      group.visible = !this.isAnnotationPreviewHidden;
+      annotation.fabricGroup = group;
+      return group;
+    },
+    restoreAnnotations() {
+      const currentFileName = this.fileNames[this.currentImageIndex];
+      const uploadedAnnotations = this.getUploadedAnnotationsForImage(
+        currentFileName
+      );
+      if (uploadedAnnotations) {
+        this.$set(this.annotations, currentFileName, uploadedAnnotations);
+        this.$set(this.annotationSources, currentFileName, "local");
+      }
+      const currentAnnotationData = this.annotations[currentFileName];
+      const alreadyLoaded = this.annotationsLoaded[currentFileName];
+      if (
+        alreadyLoaded &&
+        (!currentAnnotationData || currentAnnotationData.length === 0)
+      ) {
+        this.refreshAnnotationSidebar();
+        return;
+      }
+      if (!alreadyLoaded) {
+        this.annotationsLoaded[currentFileName] = true;
+      }
+      if (currentAnnotationData && currentAnnotationData.length > 0) {
+        const img = this.canvas.backgroundImage;
+        const drawableAnnotations = currentAnnotationData.filter((annotation) => {
+          const group = this.buildFabricAnnotation(annotation, img);
+          if (!group) {
+            return false;
+          }
+          this.canvas.add(group);
+          return true;
+        });
+        if (drawableAnnotations.length !== currentAnnotationData.length) {
+          this.$set(this.annotations, currentFileName, drawableAnnotations);
+        }
+        this.refreshAnnotationSidebar();
+        this.canvas.renderAll();
+        return;
+      }
+      this.sendImageToServer(this.currentImageIndex)
+        .then((response) => {
+          const result = response?.result;
+          if (Array.isArray(result) && result.length > 0) {
+            const img = this.canvas.backgroundImage;
+            const scaledWidth = img.getScaledWidth();
+            const scaledHeight = img.getScaledHeight();
+            const newAnnotations = result
+              .map((item) => {
+                const normalizedRelative = this.normalizeRelativeBox({
+                  left: item.x0 / scaledWidth,
+                  top: item.y0 / scaledHeight,
+                  width: (item.x1 - item.x0) / scaledWidth,
+                  height: (item.y1 - item.y0) / scaledHeight,
+                });
+                if (
+                  !normalizedRelative ||
+                  normalizedRelative.width <= 0 ||
+                  normalizedRelative.height <= 0
+                ) {
+                  return null;
+                }
+                const convertedText =
+                  this.classDictionary[item.class] ||
+                  this.unknownClassText(item.class);
+                const fillColor = this.getColorForText(convertedText);
+                return {
+                  conf: item.conf,
+                  class: item.class,
+                  text: convertedText,
+                  relative: normalizedRelative,
+                  fill: fillColor,
+                };
+              })
+              .filter(Boolean);
+            this.$set(this.annotations, currentFileName, newAnnotations);
+            this.$set(this.annotationSources, currentFileName, "server");
+            newAnnotations.forEach((annotation) => {
+              const group = this.buildFabricAnnotation(annotation, img);
+              if (group) {
+                this.canvas.add(group);
+              }
+            });
+            this.refreshAnnotationSidebar();
+            this.canvas.renderAll();
+          } else {
+            this.$set(this.annotations, currentFileName, []);
+            this.refreshAnnotationSidebar();
+          }
+        })
+        .catch((error) => {
+          console.error(
+            "バックエンドからラベルの読み込み中に失敗しました:",
+            error
+          );
+          this.refreshAnnotationSidebar();
+        });
+    },
+    handleKeyDown(event) {
+      if (this.isEditableTarget(event.target)) {
+        return;
+      }
+      const normalizedKey = event.key.toLowerCase();
+      const isModifierPressed = event.ctrlKey || event.metaKey;
+
+      if (event.code === "Space") {
+        this.isSpacePressed = true;
+        event.preventDefault();
+        return;
+      }
+
+      if (isModifierPressed && normalizedKey === "z") {
+        event.preventDefault();
+        this.undo();
+        return;
+      }
+
+      if (isModifierPressed && normalizedKey === "y") {
+        event.preventDefault();
+        this.redo();
+        return;
+      }
+
+      if (
+        isModifierPressed &&
+        (event.key === "+" || event.key === "=" || event.code === "NumpadAdd")
+      ) {
+        event.preventDefault();
+        this.zoomIn();
+        return;
+      }
+
+      if (
+        isModifierPressed &&
+        (event.key === "-" || event.code === "NumpadSubtract")
+      ) {
+        event.preventDefault();
+        this.zoomOut();
+        return;
+      }
+
+      if (isModifierPressed && normalizedKey === "0") {
+        event.preventDefault();
+        this.resetZoom();
+        return;
+      }
+
+      if (!isModifierPressed && normalizedKey === "h") {
+        event.preventDefault();
+        this.setAnnotationPreviewHidden(true);
+        return;
+      }
+
+      if (!isModifierPressed && normalizedKey === "w") {
+        event.preventDefault();
+        this.startDrawingRect();
+        return;
+      }
+
+      if (!isModifierPressed && normalizedKey === "q") {
+        event.preventDefault();
+        this.selectCategoryByOffset(-1);
+        return;
+      }
+
+      if (!isModifierPressed && normalizedKey === "e") {
+        event.preventDefault();
+        this.selectCategoryByOffset(1);
+        return;
+      }
+
+      if (
+        !isModifierPressed &&
+        /^[1-9]$/.test(event.key) &&
+        Number(event.key) <= this.keyboardCategoryShortcutCount
+      ) {
+        event.preventDefault();
+        const shortcutIndex = Number(event.key) - 1;
+        this.selectCategoryByShortcut(shortcutIndex);
+        return;
+      }
+
+      if (event.key === "Escape" && this.isDrawing) {
+        this.isDrawing = false;
+        this.canvas.defaultCursor = "default";
+        this.canvas.selection = true;
+        this.canvas.forEachObject((obj) => {
+          obj.selectable = true;
+          obj.hasControls = false;
+          obj.hoverCursor = "move";
+          obj.moveCursor = "move";
+        });
+        this.canvas.off("mouse:down");
+        this.canvas.off("mouse:move");
+        this.canvas.off("mouse:up");
+        this.$message.info("\u63cf\u753b\u3092\u30ad\u30e3\u30f3\u30bb\u30eb\u3057\u307e\u3057\u305f\u3002");
+      } else if (event.key === "Delete") {
+        this.deleteSelectedRect();
+      } else if (event.key === "ArrowDown") {
+        if (this.currentImageIndex < this.images.length - 1) {
+          this.selectImage(this.currentImageIndex + 1);
+        }
+      } else if (event.key === "ArrowUp") {
+        if (this.currentImageIndex > 0) {
+          this.selectImage(this.currentImageIndex - 1);
+        }
+      }
+    },
+    exportRectData() {
+      const zip = new JSZip();
+      Object.entries(this.annotations).forEach(([fileName, annotations]) => {
+        const processedAnnotations = annotations
+          .map((annotation) => {
+            const metrics = this.getSafeExportMetrics(annotation.relative);
+            if (!metrics) {
+              return null;
+            }
+            return `${annotation.class} ${metrics.centerX} ${metrics.centerY} ${metrics.width} ${metrics.height}\n`;
+          })
+          .filter(Boolean);
+        const txtFileName = `${fileName.split(".")[0]}.txt`;
+        const txtContent = processedAnnotations.join("");
+        zip.file(txtFileName, txtContent);
+      });
+      zip.generateAsync({ type: "blob" }).then((blob) => {
+        const today = new Date();
+        const zipName = `${today.getFullYear()}-${(today.getMonth() + 1)
+          .toString()
+          .padStart(2, "0")}-${today
+          .getDate()
+          .toString()
+          .padStart(2, "0")}.zip`;
+        saveAs(blob, zipName);
+        this.$message.success("\u30e9\u30d9\u30eb\u3092 ZIP \u30d5\u30a1\u30a4\u30eb\u306b\u51fa\u529b\u3057\u307e\u3057\u305f\u3002");
+      });
+    },
+    async sendImageToServer(index) {
+      const img = this.images[index];
+      const dataURL = img.toDataURL({
+        format: "png",
+        quality: 1,
+      });
+      const formData = new FormData();
+      const blob = this.dataURLtoBlob(dataURL);
+      formData.append("image", blob, this.fileNames[index]);
+      formData.append("type", this.uploadType);
+      try {
+        const response = await axios.post(
+          "http://172.16.1.75:6001/upload",
+          formData,
+          {
+            headers: {
+              "Content-Type": "multipart/form-data",
+            },
+          }
+        );
+        return response.data;
+      } catch (error) {
+        console.error("\u753b\u50cf\u306e\u9001\u4fe1\u4e2d\u306b\u5931\u6557\u3057\u307e\u3057\u305f:", error);
+      }
+    },
+    dataURLtoBlob(dataurl) {
+      const arr = dataurl.split(",");
+      const mime = arr[0].match(/:(.*?);/)[1];
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      return new Blob([u8arr], { type: mime });
+    },
+    selectAnnotation(index) {
+      const currentFileName = this.fileNames[this.currentImageIndex];
+      const currentAnnotations = this.annotations[currentFileName] || [];
+      const targetAnno = currentAnnotations[index];
+      if (!targetAnno || !targetAnno.fabricGroup) {
+        this.$message.warning("\u30e9\u30d9\u30eb\u30aa\u30d6\u30b8\u30a7\u30af\u30c8\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3002");
+        return;
+      }
+      this.canvas.setActiveObject(targetAnno.fabricGroup);
+      this.canvas.renderAll();
+    },
+  },
+};
+</script>
+
+<style scoped>
+#canvas {
+  display: block;
+}
+
+.main {
+  padding: 20px 0;
+}
+
+.labeler {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 80vh;
+}
+
+input[type="file"] {
+  margin-top: 10px;
+}
+.summary-panel {
+  width: 80%;
+  margin-bottom: 16px;
+  padding: 18px;
+  border: 1px solid #dce7f5;
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(246, 250, 255, 0.98) 100%);
+  box-shadow:
+    0 12px 32px rgba(64, 158, 255, 0.08),
+    0 4px 12px rgba(15, 23, 42, 0.04);
+  box-sizing: border-box;
+}
+.summary-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid #d7e6fb;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #eef6ff 0%, #ffffff 100%);
+}
+.summary-caption {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(64, 158, 255, 0.1);
+  color: #7d8ea3;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+.current-image-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-bottom: 0;
+  color: #1f2d3d;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
+}
+.summary-group {
+  margin-top: 16px;
+}
+.summary-panel > .summary-group:first-of-type {
+  margin-top: 0;
+}
+.summary-group-title {
+  margin-bottom: 10px;
+  color: #5f6f85;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.summary-divider {
+  height: 1px;
+  margin: 16px 0 2px;
+  background: linear-gradient(
+    90deg,
+    rgba(64, 158, 255, 0),
+    rgba(64, 158, 255, 0.26),
+    rgba(64, 158, 255, 0)
+  );
+}
+.upload-tag-container {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 0;
+}
+.upload-stat-tag {
+  flex: 1 1 calc(25% - 8px);
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  white-space: normal;
+  border-radius: 14px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+}
+.status-tag-container {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 0;
+}
+.status-stat-tag {
+  flex: 1 1 calc(33.333% - 8px);
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  white-space: normal;
+  border-radius: 14px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+}
+.status-stat-tag.is-clickable {
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.status-stat-tag.is-clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(31, 45, 61, 0.12);
+}
+.status-tag-container.has-abnormal .status-stat-tag {
+  flex-basis: calc(25% - 8px);
+}
+.upload-tag-note {
+  font-size: 13px;
+  color: #606266;
+}
+.thumbnails-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.thumbnail {
+  position: relative;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.3s, box-shadow 0.2s ease, transform 0.2s ease;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+.thumbnail-img {
+  width: 150px;
+  height: 100px;
+  object-fit: cover;
+  display: block;
+}
+.thumbnail:hover {
+  transform: translateY(-1px);
+  border-color: #409eff;
+  box-shadow: 0 8px 18px rgba(64, 158, 255, 0.14);
+}
+.thumbnail-status {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 1;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(144, 147, 153, 0.95);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.thumbnail-status.status-ai {
+  background: rgba(64, 158, 255, 0.95);
+}
+.thumbnail-status.status-modified {
+  background: rgba(103, 194, 58, 0.95);
+}
+.thumbnail-status.status-empty {
+  background: rgba(144, 147, 153, 0.95);
+}
+.thumbnail-status.status-abnormal {
+  background: rgba(245, 108, 108, 0.95);
+}
+.canvas-viewport {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #d7e6fb;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow:
+    0 14px 34px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.canvas-scale-container {
+  display: inline-block;
+}
+
+.canvas-viewport.is-pan-ready {
+  cursor: grab;
+}
+
+.canvas-viewport.is-panning {
+  cursor: grabbing;
+}
+.thumbnail.active {
+  border-width: 4px;
+  border-color: #409eff;
+  box-shadow:
+    0 0 0 2px rgba(64, 158, 255, 0.18),
+    0 0 16px rgba(64, 158, 255, 0.45);
+}
+.thumb-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #d7e6fb;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #eef6ff 0%, #ffffff 100%);
+  color: #1f2d3d;
+  font-weight: 700;
+  text-align: center;
+}
+.annotation-radio-group {
+  display: flex;
+  flex-direction: column;
+  max-height: 280px;
+  overflow-y: auto;
+}
+/deep/ .annotation-radio-group .el-radio {
+  margin-right: 0;
+  margin-bottom: 8px;
+}
+/deep/ .annotation-radio-group .el-radio:last-child {
+  margin-bottom: 0;
+}
+.annotation-count-text {
+  display: block;
+}
+@media (max-width: 900px) {
+  .summary-panel {
+    width: 100%;
+  }
+
+  .upload-stat-tag {
+    flex-basis: calc(50% - 8px);
+  }
+
+  .status-stat-tag,
+  .status-tag-container.has-abnormal .status-stat-tag {
+    flex-basis: calc(50% - 8px);
+  }
+}
+</style>

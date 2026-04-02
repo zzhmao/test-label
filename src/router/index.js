@@ -97,9 +97,23 @@ export const constantRoutes = [
     ]
   },
   {
+    path: '/label',
+    component: Layout,
+    redirect: '/label/index',
+    children: [
+      {
+        path: 'index',
+        component: () => import('@/views/label/index.vue'),
+        name: 'label',
+        meta: { title: 'ラベル', icon: 'edit', noCache: true }
+      }
+    ]
+  },
+  {
     path: '/char',
     component: Layout,
     redirect: '/char',
+    hidden: true,
     children: [
       {
         path: 'char',
@@ -113,6 +127,7 @@ export const constantRoutes = [
     path: '/three',
     component: Layout,
     redirect: '/three',
+    hidden: true,
     children: [
       {
         path: 'three',
