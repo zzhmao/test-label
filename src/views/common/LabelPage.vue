@@ -1,8 +1,14 @@
 ﻿<template>
-  <el-container style="height: 90vh">
-    <el-aside width="200px" style="padding-top: 20px; overflow-y: auto">
+  <el-container class="label-workspace">
+    <el-aside width="248px" class="workspace-aside workspace-aside-left">
+      <div class="workspace-panel workspace-panel-library">
+        <div class="workspace-panel-header">
+          <div class="workspace-panel-title">画像一覧</div>
+        </div>
       <div class="thumb-header" v-if="images.length > 0">
-        {{ currentImageIndex + 1 }} / {{ images.length }}
+        <span class="thumb-header-current">{{ currentImageIndex + 1 }}</span>
+        <span class="thumb-header-divider">/</span>
+        <span class="thumb-header-total">{{ images.length }}</span>
       </div>
       <div v-if="thumbnails.length > 0" class="thumbnails-container">
         <div
@@ -25,10 +31,12 @@
           <img :src="thumbnail" alt="Thumbnail" class="thumbnail-img" />
         </div>
       </div>
+      </div>
     </el-aside>
     <el-main class="main">
-      <div class="labeler">
-        <div class="summary-panel">
+      <div class="workspace-main-shell">
+      <div ref="labeler" class="labeler">
+        <div ref="summaryPanel" class="summary-panel">
           <div v-if="currentImageName" class="summary-header">
             <div class="summary-caption">{{ currentImageTitle }}</div>
             <div class="current-image-name" :title="currentImageName">
@@ -122,27 +130,35 @@
           webkitdirectory
           style="display: none"
         />
-        <div
-          class="canvas-viewport"
-          ref="canvasViewport"
-          :class="{
-            'is-panning': isPanning,
-            'is-pan-ready': isSpacePressed && !isDrawing && scaleFactor > 1,
-          }"
-          :style="canvasViewportStyle"
-          @wheel.prevent="handleWheel"
-        >
-          <div class="canvas-scale-container" :style="scaleStyle">
-            <canvas id="canvas"></canvas>
+        <div ref="canvasStageShell" class="canvas-stage-shell">
+          <div
+            class="canvas-viewport"
+            ref="canvasViewport"
+            :class="{
+              'is-panning': isPanning,
+              'is-pan-ready': isSpacePressed && !isDrawing && scaleFactor > 1,
+            }"
+            :style="canvasViewportStyle"
+            @wheel.prevent="handleWheel"
+          >
+            <div class="canvas-scale-container" :style="scaleStyle">
+              <canvas id="canvas"></canvas>
+            </div>
           </div>
         </div>
       </div>
+      </div>
     </el-main>
-    <el-aside width="200px" style="padding-top: 20px; overflow-y: auto">
-      <el-form>
-        <el-form-item>
+    <el-aside width="248px" class="workspace-aside">
+      <div class="workspace-panel workspace-panel-tools">
+        <div class="workspace-panel-header">
+          <div class="workspace-panel-title">ラベル操作</div>
+        </div>
+      <el-form class="tool-form">
+        <el-form-item class="tool-form-item tool-form-item-select">
           <el-select
             v-model="selectedText"
+            class="tool-select"
             :placeholder="toolPanelSubtitle"
             filterable
           >
@@ -155,34 +171,38 @@
             </el-option>
           </el-select>
         </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="startDrawingRect">
+        <el-form-item class="tool-form-item">
+          <el-button class="tool-button" type="primary" @click="startDrawingRect">
             ラベルを追加
           </el-button>
         </el-form-item>
-        <el-form-item>
-          <el-button type="danger" @click="deleteSelectedRect">
+        <el-form-item class="tool-form-item">
+          <el-button class="tool-button" type="danger" @click="deleteSelectedRect">
             ラベルを削除
           </el-button>
         </el-form-item>
-        <el-form-item>
-          <el-button type="success" @click="exportRectData">
+        <el-form-item class="tool-form-item">
+          <el-button class="tool-button" type="success" @click="exportRectData">
             ラベルを出力
           </el-button>
         </el-form-item>
-        <el-form-item>
-          <el-button
-            icon="el-icon-refresh-left"
-            @click="undo"
-            :disabled="undoStack.length === 0"
-          ></el-button>
-          <el-button
-            icon="el-icon-refresh-right"
-            @click="redo"
-            :disabled="redoStack.length === 0"
-          ></el-button>
+        <el-form-item class="tool-form-item tool-inline-actions-item">
+          <div class="tool-inline-actions">
+            <el-button
+              class="tool-icon-button"
+              icon="el-icon-refresh-left"
+              @click="undo"
+              :disabled="undoStack.length === 0"
+            ></el-button>
+            <el-button
+              class="tool-icon-button"
+              icon="el-icon-refresh-right"
+              @click="redo"
+              :disabled="redoStack.length === 0"
+            ></el-button>
+          </div>
         </el-form-item>
-        <el-form-item>
+        <el-form-item class="tool-form-item annotation-list-item">
           <el-radio-group
             v-model="selectedAnnoRadio"
             class="annotation-radio-group"
@@ -197,7 +217,7 @@
             </el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="countWarningVisible">
+        <el-form-item v-if="countWarningVisible" class="tool-form-item">
           <el-alert
             :title="countWarningText"
             type="error"
@@ -205,12 +225,13 @@
             :closable="false"
           />
         </el-form-item>
-        <el-form-item>
+        <el-form-item class="tool-form-item">
           <span class="annotation-count-text">
             {{ annotationCountLabel }}: {{ confidenceList.length }} 件
           </span>
         </el-form-item>
       </el-form>
+      </div>
     </el-aside>
   </el-container>
 </template>
@@ -272,6 +293,8 @@ export default {
       redoStack: [],
       annotationsLoaded: {},
       annotationSources: {},
+      pendingServerImageName: "",
+      lastImageSwitchHintAt: 0,
       uploadedAnnotationFiles: {
         exact: {},
         base: {},
@@ -286,6 +309,7 @@ export default {
   },
   mounted() {
     this.initCanvas();
+    window.addEventListener("resize", this.handleWindowResize);
     window.addEventListener("keydown", this.handleKeyDown);
     window.addEventListener("keyup", this.handleKeyUp);
     window.addEventListener("blur", this.handleWindowBlur);
@@ -300,6 +324,7 @@ export default {
     this.initializeFromProps();
   },
   beforeDestroy() {
+    window.removeEventListener("resize", this.handleWindowResize);
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup", this.handleKeyUp);
     window.removeEventListener("blur", this.handleWindowBlur);
@@ -759,10 +784,34 @@ export default {
       this.canvas.backgroundColor = "lightgray";
       this.canvas.renderAll();
     },
+    handleWindowResize() {
+      if (!this.canvas) {
+        return;
+      }
+      this.resizeCanvas();
+      if (this.images.length > 0) {
+        this.displayImage(this.currentImageIndex);
+      }
+    },
     resizeCanvas() {
-      const container = document.querySelector(".labeler");
-      this.canvas.setWidth(container.clientWidth * 0.8);
-      this.canvas.setHeight(window.innerHeight * 0.6);
+      const stageShell = this.$refs.canvasStageShell;
+      const labeler = this.$refs.labeler;
+      const summaryPanel = this.$refs.summaryPanel;
+      const stagePadding = 0;
+      const targetWidth = stageShell
+        ? Math.max(stageShell.clientWidth - stagePadding, 320)
+        : Math.max(labeler.clientWidth, 320);
+      const labelerHeight = labeler ? labeler.clientHeight : 0;
+      const summaryHeight = summaryPanel ? summaryPanel.offsetHeight : 0;
+      const canvasHeightFromLayout = labelerHeight
+        ? labelerHeight - summaryHeight - 20
+        : 0;
+      const targetHeight = Math.max(
+        Math.min(canvasHeightFromLayout || window.innerHeight * 0.6, window.innerHeight * 0.68),
+        280
+      );
+      this.canvas.setWidth(targetWidth);
+      this.canvas.setHeight(targetHeight);
       this.canvas.renderAll();
       this.applyPanConstraints();
     },
@@ -903,8 +952,9 @@ export default {
         ? this.statusJumpPointers[statusKey]
         : -1;
       const nextPointer = (currentPointer + 1) % matchedIndexes.length;
-      this.$set(this.statusJumpPointers, statusKey, nextPointer);
-      this.selectImage(matchedIndexes[nextPointer]);
+      if (this.selectImage(matchedIndexes[nextPointer])) {
+        this.$set(this.statusJumpPointers, statusKey, nextPointer);
+      }
     },
     readFileAsDataURL(file) {
       return new Promise((resolve, reject) => {
@@ -984,6 +1034,8 @@ export default {
       this.redoStack = [];
       this.annotationsLoaded = {};
       this.annotationSources = {};
+      this.pendingServerImageName = "";
+      this.lastImageSwitchHintAt = 0;
       const files = Array.from(inputFiles || [])
         .filter((file) => file.type.startsWith("image/"))
         .sort((a, b) =>
@@ -1144,6 +1196,14 @@ export default {
         this.displayImage(this.currentImageIndex || 0);
       }
     },
+    lockImageSwitchForServerRequest(fileName) {
+      this.pendingServerImageName = fileName;
+    },
+    releaseImageSwitchForServerRequest(fileName) {
+      if (this.pendingServerImageName === fileName) {
+        this.pendingServerImageName = "";
+      }
+    },
     getUploadedAnnotationText(fileName, imageIndex = this.currentImageIndex) {
       const relativePath = this.imageRelativePaths[imageIndex] || fileName;
       const exactKey = this.getMatchKeyWithoutExt(relativePath);
@@ -1277,10 +1337,21 @@ export default {
       this.restoreAnnotations();
     },
     selectImage(index) {
+      if (index !== this.currentImageIndex && this.pendingServerImageName) {
+        const now = Date.now();
+        if (now - this.lastImageSwitchHintAt >= 1000) {
+          this.lastImageSwitchHintAt = now;
+          this.$message.info(
+            "\u73fe\u5728\u306e\u753b\u50cf\u306e AI \u8a8d\u8b58\u7d50\u679c\u3092\u53d6\u5f97\u4e2d\u3067\u3059\u3002\u5fdc\u7b54\u304c\u8fd4\u3063\u3066\u304b\u3089\u6b21\u306e\u753b\u50cf\u3078\u5207\u308a\u66ff\u3048\u3066\u304f\u3060\u3055\u3044\u3002"
+          );
+        }
+        return false;
+      }
       this.undoStack = [];
       this.redoStack = [];
       this.displayImage(index);
       this.scrollSelectedThumbToCenter(index);
+      return true;
     },
     getColorForText(text) {
       if (this.colorMap[text]) {
@@ -1764,6 +1835,7 @@ export default {
         this.canvas.renderAll();
         return;
       }
+      this.lockImageSwitchForServerRequest(currentFileName);
       this.sendImageToServer(this.currentImageIndex)
         .then((response) => {
           const result = response?.result;
@@ -1813,12 +1885,14 @@ export default {
             this.$set(this.annotations, currentFileName, []);
             this.refreshAnnotationSidebar();
           }
+          this.releaseImageSwitchForServerRequest(currentFileName);
         })
         .catch((error) => {
           console.error(
             "バックエンドからラベルの読み込み中に失敗しました:",
             error
           );
+          this.releaseImageSwitchForServerRequest(currentFileName);
           this.refreshAnnotationSidebar();
         });
     },
@@ -2016,62 +2090,138 @@ export default {
   display: block;
 }
 
+.label-workspace {
+  height: 90vh;
+  padding: 0 20px;
+  gap: 20px;
+  box-sizing: border-box;
+  background: linear-gradient(180deg, #eef3f9 0%, #f7f9fc 42%, #f3f6fb 100%);
+  overflow: hidden;
+}
+
+.workspace-aside,
 .main {
   padding: 20px 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-aside {
+  overflow: hidden;
+}
+
+.workspace-aside-left {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.workspace-panel,
+.workspace-main-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  border: 1px solid #dfe7f3;
+  border-radius: 28px;
+  background: #ffffff;
+  box-shadow:
+    0 18px 36px rgba(15, 23, 42, 0.06),
+    0 4px 10px rgba(15, 23, 42, 0.03);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.workspace-panel {
+  padding: 26px 18px 20px;
+}
+
+.workspace-panel-library {
+  display: block;
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+}
+
+.workspace-main-shell {
+  padding: 26px 22px 24px;
+  overflow: hidden;
+}
+
+.workspace-panel-header {
+  position: relative;
+  z-index: 1;
+  margin-bottom: 18px;
+  padding: 2px 4px 14px;
+  border-bottom: 1px solid #e8edf6;
+}
+
+.workspace-panel-title {
+  color: #10253f;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.3;
 }
 
 .labeler {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  height: 80vh;
+  justify-content: flex-start;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
 }
 
 input[type="file"] {
   margin-top: 10px;
 }
 .summary-panel {
-  width: 80%;
-  margin-bottom: 16px;
-  padding: 18px;
-  border: 1px solid #dce7f5;
-  border-radius: 20px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(246, 250, 255, 0.98) 100%);
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+  margin-bottom: 20px;
+  padding: 24px;
+  border: 1px solid #e1e8f4;
+  border-radius: 26px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
   box-shadow:
-    0 12px 32px rgba(64, 158, 255, 0.08),
-    0 4px 12px rgba(15, 23, 42, 0.04);
+    0 16px 30px rgba(15, 23, 42, 0.05),
+    0 4px 10px rgba(15, 23, 42, 0.03);
   box-sizing: border-box;
+  overflow: hidden;
 }
+
 .summary-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 16px;
-  border: 1px solid #d7e6fb;
-  border-radius: 16px;
-  background: linear-gradient(135deg, #eef6ff 0%, #ffffff 100%);
+  margin-top: 8px;
+  padding: 16px 18px;
+  border: 1px solid #dde6f3;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #f5f8ff 0%, #ffffff 100%);
 }
 .summary-caption {
   flex: 0 0 auto;
   margin-bottom: 0;
-  padding: 4px 10px;
+  padding: 5px 12px;
   border-radius: 999px;
-  background: rgba(64, 158, 255, 0.1);
-  color: #7d8ea3;
+  background: rgba(45, 99, 239, 0.09);
+  color: #2d63ef;
   font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-weight: 800;
+  letter-spacing: 0.08em;
   text-align: center;
 }
 .current-image-name {
   flex: 1 1 auto;
   min-width: 0;
   margin-bottom: 0;
-  color: #1f2d3d;
-  font-size: 18px;
-  font-weight: 700;
+  color: #142844;
+  font-size: 19px;
+  font-weight: 800;
   line-height: 1.4;
   text-align: left;
   white-space: nowrap;
@@ -2080,26 +2230,27 @@ input[type="file"] {
   box-sizing: border-box;
 }
 .summary-group {
-  margin-top: 16px;
+  margin-top: 18px;
 }
 .summary-panel > .summary-group:first-of-type {
   margin-top: 0;
 }
 .summary-group-title {
-  margin-bottom: 10px;
-  color: #5f6f85;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  margin-bottom: 12px;
+  color: #5d6f88;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
 }
 .summary-divider {
   height: 1px;
-  margin: 16px 0 2px;
+  margin: 18px 0 4px;
   background: linear-gradient(
     90deg,
-    rgba(64, 158, 255, 0),
-    rgba(64, 158, 255, 0.26),
-    rgba(64, 158, 255, 0)
+    rgba(111, 132, 247, 0),
+    rgba(111, 132, 247, 0.26),
+    rgba(143, 112, 218, 0.1),
+    rgba(111, 132, 247, 0)
   );
 }
 .upload-tag-container {
@@ -2113,18 +2264,19 @@ input[type="file"] {
 }
 .upload-stat-tag {
   flex: 1 1 calc(25% - 8px);
-  min-height: 46px;
+  min-width: 0;
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 12px;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.4;
+  padding: 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
   text-align: center;
   white-space: normal;
-  border-radius: 14px;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+  border-radius: 16px;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
 }
 .status-tag-container {
   display: flex;
@@ -2137,72 +2289,124 @@ input[type="file"] {
 }
 .status-stat-tag {
   flex: 1 1 calc(33.333% - 8px);
-  min-height: 46px;
+  min-width: 0;
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 12px;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.4;
+  padding: 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
   text-align: center;
   white-space: normal;
-  border-radius: 14px;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+  border-radius: 16px;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
 }
 .status-stat-tag.is-clickable {
   cursor: pointer;
   transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 .status-stat-tag.is-clickable:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(31, 45, 61, 0.12);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 22px rgba(31, 45, 61, 0.14);
 }
 .status-tag-container.has-abnormal .status-stat-tag {
   flex-basis: calc(25% - 8px);
 }
-.upload-tag-note {
-  font-size: 13px;
-  color: #606266;
+
+/deep/ .upload-stat-tag.el-tag,
+/deep/ .status-stat-tag.el-tag {
+  border-width: 1px;
+}
+
+/deep/ .upload-stat-tag.el-tag--plain.el-tag--primary,
+/deep/ .status-stat-tag.el-tag--plain.el-tag--primary {
+  border-color: rgba(45, 99, 239, 0.22);
+  background: #eef4ff;
+  color: #2d63ef;
+}
+
+/deep/ .upload-stat-tag.el-tag--plain.el-tag--success,
+/deep/ .status-stat-tag.el-tag--plain.el-tag--success {
+  border-color: rgba(28, 154, 101, 0.2);
+  background: #effaf4;
+  color: #128252;
+}
+
+/deep/ .upload-stat-tag.el-tag--plain.el-tag--info,
+/deep/ .status-stat-tag.el-tag--plain.el-tag--info {
+  border-color: rgba(104, 116, 136, 0.2);
+  background: #f4f7fb;
+  color: #556880;
+}
+
+/deep/ .upload-stat-tag.el-tag--plain.el-tag--warning,
+/deep/ .status-stat-tag.el-tag--plain.el-tag--warning {
+  border-color: rgba(230, 147, 45, 0.24);
+  background: #fff7eb;
+  color: #c57a1a;
+}
+
+/deep/ .upload-stat-tag.el-tag--plain.el-tag--danger,
+/deep/ .status-stat-tag.el-tag--plain.el-tag--danger {
+  border-color: rgba(220, 84, 84, 0.22);
+  background: #fff1f1;
+  color: #d75050;
 }
 .thumbnails-container {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
+
+.workspace-panel-library .thumbnails-container {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+  padding-right: 0;
 }
 .thumbnail {
   position: relative;
   cursor: pointer;
-  border: 2px solid transparent;
-  transition: border-color 0.3s, box-shadow 0.2s ease, transform 0.2s ease;
-  border-radius: 10px;
+  padding: 8px;
+  border: 1px solid #dce6f3;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
+  border-radius: 20px;
   overflow: hidden;
   background: #fff;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
 }
 .thumbnail-img {
-  width: 150px;
-  height: 100px;
+  width: 100%;
+  height: 124px;
   object-fit: cover;
   display: block;
+  border-radius: 14px;
 }
 .thumbnail:hover {
-  transform: translateY(-1px);
-  border-color: #409eff;
-  box-shadow: 0 8px 18px rgba(64, 158, 255, 0.14);
+  transform: translateY(-2px);
+  border-color: #7d90ff;
+  box-shadow: 0 18px 30px rgba(45, 99, 239, 0.14);
 }
 .thumbnail-status {
   position: absolute;
-  top: 6px;
-  left: 6px;
+  top: 16px;
+  left: 16px;
   z-index: 1;
-  padding: 2px 8px;
+  padding: 4px 10px;
   border-radius: 999px;
-  font-size: 12px;
-  line-height: 18px;
-  font-weight: 600;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 700;
   color: #fff;
   background: rgba(144, 147, 153, 0.95);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
 }
 .thumbnail-status.status-ai {
   background: rgba(64, 158, 255, 0.95);
@@ -2216,15 +2420,30 @@ input[type="file"] {
 .thumbnail-status.status-abnormal {
   background: rgba(245, 108, 108, 0.95);
 }
+.canvas-stage-shell {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+  box-sizing: border-box;
+}
 .canvas-viewport {
   position: relative;
   overflow: hidden;
-  border: 1px solid #d7e6fb;
-  border-radius: 20px;
-  background: #fff;
+  margin-top: 0;
+  border: 1px solid #d7e3f4;
+  border-radius: 24px;
+  background: linear-gradient(180deg, #fdfefe 0%, #f4f7fb 100%);
   box-shadow:
     0 14px 34px rgba(15, 23, 42, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .canvas-scale-container {
@@ -2239,43 +2458,212 @@ input[type="file"] {
   cursor: grabbing;
 }
 .thumbnail.active {
-  border-width: 4px;
-  border-color: #409eff;
+  border-width: 2px;
+  border-color: #4d6fff;
   box-shadow:
-    0 0 0 2px rgba(64, 158, 255, 0.18),
-    0 0 16px rgba(64, 158, 255, 0.45);
+    0 0 0 4px rgba(77, 111, 255, 0.12),
+    0 18px 34px rgba(77, 111, 255, 0.24);
 }
 .thumb-header {
   position: sticky;
   top: 0;
   z-index: 2;
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border: 1px solid #d7e6fb;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #eef6ff 0%, #ffffff 100%);
-  color: #1f2d3d;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 9px 12px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #2f67ee 0%, #7a68e7 100%);
+  color: #ffffff;
   font-weight: 700;
   text-align: center;
+  box-shadow: 0 12px 22px rgba(77, 111, 255, 0.22);
+}
+.thumb-header-current {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+}
+.thumb-header-divider,
+.thumb-header-total {
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0.88;
+}
+.tool-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  margin-top: 6px;
+  min-height: 0;
+}
+/deep/ .tool-form .el-form-item {
+  margin-bottom: 14px;
+}
+/deep/ .tool-form .el-form-item__content {
+  width: 100%;
+}
+.annotation-list-item {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/deep/ .annotation-list-item .el-form-item__content {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/deep/ .tool-select .el-input__inner {
+  height: 46px;
+  border-radius: 14px;
+  border-color: #dce4f2;
+  background: #f9fbff;
+  color: #19304f;
+  font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+/deep/ .tool-select .el-input__inner:focus,
+/deep/ .tool-select .el-input.is-focus .el-input__inner {
+  border-color: #6d84f7;
+  box-shadow: 0 0 0 3px rgba(109, 132, 247, 0.12);
+}
+/deep/ .tool-button.el-button {
+  width: 100%;
+  height: 46px;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 700;
+}
+/deep/ .tool-button.el-button--primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #2f67ee 0%, #4e80f6 100%);
+  box-shadow: 0 14px 24px rgba(47, 103, 238, 0.22);
+}
+/deep/ .tool-button.el-button--danger {
+  border-color: #f2cece;
+  background: linear-gradient(180deg, #fff8f8 0%, #fff1f1 100%);
+  color: #df5b5b;
+}
+/deep/ .tool-button.el-button--success {
+  border-color: #cadbfd;
+  background: linear-gradient(180deg, #f7faff 0%, #eef4ff 100%);
+  color: #2d63ef;
+}
+.tool-inline-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+/deep/ .tool-icon-button.el-button {
+  width: 100%;
+  height: 44px;
+  border-radius: 14px;
+  border-color: #d9e2f1;
+  background: #f7faff;
+  color: #315bc4;
+  font-size: 16px;
 }
 .annotation-radio-group {
   display: flex;
   flex-direction: column;
-  max-height: 280px;
+  flex: 1 1 auto;
+  height: 100%;
   overflow-y: auto;
+  min-height: 0;
+  padding: 8px;
+  border: 1px solid #e3e9f4;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #fbfcff 0%, #f7f9fc 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.94);
 }
 /deep/ .annotation-radio-group .el-radio {
+  display: flex;
+  align-items: center;
   margin-right: 0;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  padding: 11px 12px;
+  border: 1px solid #e5ebf5;
+  border-radius: 14px;
+  background: #ffffff;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 /deep/ .annotation-radio-group .el-radio:last-child {
   margin-bottom: 0;
 }
+/deep/ .annotation-radio-group .el-radio.is-checked {
+  border-color: #96a9ff;
+  background: #f5f7ff;
+  box-shadow: 0 8px 18px rgba(77, 111, 255, 0.1);
+}
+/deep/ .annotation-radio-group .el-radio__label {
+  white-space: normal;
+  line-height: 1.45;
+  color: #1d2f48;
+  font-weight: 600;
+}
+/deep/ .annotation-radio-group .el-radio__input.is-checked + .el-radio__label {
+  color: #2048b3;
+}
+/deep/ .tool-form .el-alert {
+  border-radius: 16px;
+}
 .annotation-count-text {
   display: block;
+  padding: 12px 14px;
+  border: 1px solid #e3e9f4;
+  border-radius: 16px;
+  background: #f9fbff;
+  color: #1e3048;
+  font-weight: 700;
+  text-align: center;
 }
+@media (max-width: 1440px) {
+  .label-workspace {
+    padding: 0 16px;
+    gap: 16px;
+  }
+
+  .summary-panel,
+  .canvas-stage-shell {
+    width: 100%;
+  }
+}
+
+@media (max-width: 1080px) {
+  .label-workspace {
+    flex-direction: column;
+    height: auto;
+    padding: 16px;
+  }
+
+  .workspace-aside,
+  .main {
+    width: 100% !important;
+    padding: 0;
+  }
+
+  .workspace-panel,
+  .workspace-main-shell {
+    min-height: auto;
+  }
+
+  .workspace-main-shell {
+    overflow: hidden;
+  }
+
+  .labeler {
+    align-items: stretch;
+  }
+}
+
 @media (max-width: 900px) {
   .summary-panel {
+    width: 100%;
+  }
+
+  .canvas-stage-shell {
     width: 100%;
   }
 

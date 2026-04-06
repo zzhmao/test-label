@@ -41,13 +41,6 @@ import * as filters from './filters' // global filters
 //   replaysOnErrorSampleRate: 1.0, // If you're not already sampling the entire session, change the sample rate to 100% when sampling sessions where errors occur.
 // });
 
-// ...
-
-new Vue({
-  router,
-  render: (h) => h(App),
-}).$mount("#app");
-
 /**
  * If you don't want to use mock-server
  * you want to use MockJs for mock api
