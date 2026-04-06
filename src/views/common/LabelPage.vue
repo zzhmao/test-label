@@ -304,6 +304,8 @@ export default {
       pendingServerImageName: "",
       lastImageSwitchHintAt: 0,
       thumbnailCenterRequestId: 0,
+      layoutResizeObserver: null,
+      canvasRelayoutFrameId: 0,
       uploadedAnnotationFiles: {
         exact: {},
         base: {},
@@ -318,6 +320,7 @@ export default {
   },
   mounted() {
     this.initCanvas();
+    this.startLayoutResizeObserver();
     window.addEventListener("resize", this.handleWindowResize);
     window.addEventListener("keydown", this.handleKeyDown);
     window.addEventListener("keyup", this.handleKeyUp);
@@ -330,9 +333,11 @@ export default {
     this.canvas.on("mouse:down", this.handleCanvasMouseDown);
     this.canvas.on("mouse:move", this.handleCanvasMouseMove);
     this.canvas.on("mouse:up", this.handleCanvasMouseUp);
+    this.scheduleCanvasRelayout({ redrawImage: false, settleFrames: 2 });
     this.initializeFromProps();
   },
   beforeDestroy() {
+    this.stopLayoutResizeObserver();
     window.removeEventListener("resize", this.handleWindowResize);
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup", this.handleKeyUp);
@@ -504,6 +509,81 @@ export default {
       }
       if (this.initialImageFiles.length > 0) {
         await this.loadImageFiles(this.initialImageFiles);
+      }
+      this.scheduleCanvasRelayout({
+        redrawImage: this.images.length > 0,
+        settleFrames: 2,
+      });
+    },
+    startLayoutResizeObserver() {
+      if (
+        typeof window === "undefined" ||
+        typeof window.ResizeObserver === "undefined"
+      ) {
+        return;
+      }
+      this.stopLayoutResizeObserver();
+      this.layoutResizeObserver = new window.ResizeObserver(() => {
+        this.scheduleCanvasRelayout({
+          redrawImage: this.images.length > 0,
+          settleFrames: 1,
+        });
+      });
+      [this.$refs.labeler, this.$refs.summaryPanel, this.$refs.canvasStageShell]
+        .filter(Boolean)
+        .forEach((element) => {
+          this.layoutResizeObserver.observe(element);
+        });
+    },
+    stopLayoutResizeObserver() {
+      if (this.layoutResizeObserver) {
+        this.layoutResizeObserver.disconnect();
+        this.layoutResizeObserver = null;
+      }
+      if (this.canvasRelayoutFrameId) {
+        window.cancelAnimationFrame(this.canvasRelayoutFrameId);
+        this.canvasRelayoutFrameId = 0;
+      }
+    },
+    scheduleCanvasRelayout({
+      redrawImage = this.images.length > 0,
+      settleFrames = 1,
+    } = {}) {
+      if (!this.canvas) {
+        return;
+      }
+      if (this.canvasRelayoutFrameId) {
+        window.cancelAnimationFrame(this.canvasRelayoutFrameId);
+        this.canvasRelayoutFrameId = 0;
+      }
+      const runAfterFrames = (remainingFrames) => {
+        this.canvasRelayoutFrameId = window.requestAnimationFrame(() => {
+          if (remainingFrames > 0) {
+            runAfterFrames(remainingFrames - 1);
+            return;
+          }
+          this.canvasRelayoutFrameId = 0;
+          this.relayoutCanvas(redrawImage);
+        });
+      };
+      this.$nextTick(() => {
+        runAfterFrames(Math.max(0, settleFrames));
+      });
+    },
+    relayoutCanvas(redrawImage = this.images.length > 0) {
+      if (!this.canvas) {
+        return;
+      }
+      const previousWidth = this.canvas.getWidth();
+      const previousHeight = this.canvas.getHeight();
+      this.resizeCanvas();
+      const nextWidth = this.canvas.getWidth();
+      const nextHeight = this.canvas.getHeight();
+      const sizeChanged =
+        Math.abs(nextWidth - previousWidth) > 1 ||
+        Math.abs(nextHeight - previousHeight) > 1;
+      if (redrawImage && sizeChanged && this.images.length > 0) {
+        this.displayImage(this.currentImageIndex);
       }
     },
     handleWheel(e) {
@@ -865,10 +945,10 @@ export default {
       if (!this.canvas) {
         return;
       }
-      this.resizeCanvas();
-      if (this.images.length > 0) {
-        this.displayImage(this.currentImageIndex);
-      }
+      this.scheduleCanvasRelayout({
+        redrawImage: this.images.length > 0,
+        settleFrames: 1,
+      });
     },
     resizeCanvas() {
       const stageShell = this.$refs.canvasStageShell;
@@ -1160,6 +1240,7 @@ export default {
         }
       });
       this.displayImage(0);
+      this.scheduleCanvasRelayout({ redrawImage: true, settleFrames: 2 });
     },
     async uploadImages(event) {
       await this.loadImageFiles(event.target.files || []);
