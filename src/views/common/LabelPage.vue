@@ -1,6 +1,10 @@
 ﻿<template>
   <el-container class="label-workspace">
-    <el-aside width="248px" class="workspace-aside workspace-aside-left">
+    <el-aside
+      ref="thumbnailAside"
+      width="248px"
+      class="workspace-aside workspace-aside-left"
+    >
       <div class="workspace-panel workspace-panel-library">
         <div class="workspace-panel-header">
           <div class="workspace-panel-title">画像一覧</div>
@@ -10,7 +14,11 @@
         <span class="thumb-header-divider">/</span>
         <span class="thumb-header-total">{{ images.length }}</span>
       </div>
-      <div v-if="thumbnails.length > 0" class="thumbnails-container">
+      <div
+        v-if="thumbnails.length > 0"
+        ref="thumbnailsContainer"
+        class="thumbnails-container"
+      >
         <div
           v-for="(thumbnail, index) in thumbnails"
           :key="index"
@@ -295,6 +303,7 @@ export default {
       annotationSources: {},
       pendingServerImageName: "",
       lastImageSwitchHintAt: 0,
+      thumbnailCenterRequestId: 0,
       uploadedAnnotationFiles: {
         exact: {},
         base: {},
@@ -716,16 +725,84 @@ export default {
         this.selectAnnotation(newVal);
       }
     },
+    getThumbnailAsideElement() {
+      const asideRef = this.$refs.thumbnailAside;
+      return asideRef && asideRef.$el ? asideRef.$el : asideRef;
+    },
+    syncThumbnailScrollPadding() {
+      const asideEl = this.getThumbnailAsideElement();
+      const container = this.$refs.thumbnailsContainer;
+      const sampleRef =
+        this.$refs[`thumb-${this.currentImageIndex}`] ||
+        this.$refs["thumb-0"];
+      const sampleEl = Array.isArray(sampleRef) ? sampleRef[0] : sampleRef;
+      if (!asideEl || !container || !sampleEl) {
+        return;
+      }
+      const asideRect = asideEl.getBoundingClientRect();
+      const listRect = container.getBoundingClientRect();
+      const visibleTop = Math.max(listRect.top - asideRect.top, 0);
+      const visibleHeight = Math.max(asideEl.clientHeight - visibleTop, 0);
+      const spacer = Math.max((visibleHeight - sampleEl.offsetHeight) / 2, 16);
+      container.style.paddingTop = `${spacer}px`;
+      container.style.paddingBottom = `${spacer}px`;
+    },
     scrollSelectedThumbToCenter(index) {
+      const requestId = ++this.thumbnailCenterRequestId;
       this.$nextTick(() => {
-        const ref = this.$refs[`thumb-${index}`];
-        const el = Array.isArray(ref) ? ref[0] : ref;
-        if (!el || !el.scrollIntoView) return;
+        if (
+          requestId !== this.thumbnailCenterRequestId ||
+          index !== this.currentImageIndex
+        ) {
+          return;
+        }
+        window.requestAnimationFrame(() => {
+          if (
+            requestId !== this.thumbnailCenterRequestId ||
+            index !== this.currentImageIndex
+          ) {
+            return;
+          }
+          const asideEl = this.getThumbnailAsideElement();
+          const container = this.$refs.thumbnailsContainer;
+          const ref = this.$refs[`thumb-${index}`];
+          const el = Array.isArray(ref) ? ref[0] : ref;
+          if (!asideEl || !container || !el) return;
 
-        el.scrollIntoView({
-          behavior: "smooth",
-          block: "center",
-          inline: "nearest",
+          this.syncThumbnailScrollPadding();
+
+          window.requestAnimationFrame(() => {
+            if (
+              requestId !== this.thumbnailCenterRequestId ||
+              index !== this.currentImageIndex
+            ) {
+              return;
+            }
+            const asideRect = asideEl.getBoundingClientRect();
+            const listRect = container.getBoundingClientRect();
+            const itemRect = el.getBoundingClientRect();
+            const currentScrollTop = asideEl.scrollTop;
+            const visibleTop = Math.max(listRect.top - asideRect.top, 0);
+            const visibleHeight = Math.max(
+              asideEl.clientHeight - visibleTop,
+              0
+            );
+            const currentCenter =
+              itemRect.top - asideRect.top + itemRect.height / 2;
+            const targetCenter = visibleTop + visibleHeight / 2;
+            const rawTargetScrollTop =
+              currentScrollTop + (currentCenter - targetCenter);
+            const maxScrollTop = Math.max(
+              asideEl.scrollHeight - asideEl.clientHeight,
+              0
+            );
+            const targetScrollTop = Math.min(
+              Math.max(0, rawTargetScrollTop),
+              maxScrollTop
+            );
+
+            asideEl.scrollTop = targetScrollTop;
+          });
         });
       });
     },
@@ -1334,6 +1411,7 @@ export default {
       this.applyPanConstraints();
       this.currentImageIndex = index;
       this.refreshAnnotationSidebar();
+      this.scrollSelectedThumbToCenter(index);
       this.restoreAnnotations();
     },
     selectImage(index) {
@@ -1350,7 +1428,6 @@ export default {
       this.undoStack = [];
       this.redoStack = [];
       this.displayImage(index);
-      this.scrollSelectedThumbToCenter(index);
       return true;
     },
     getColorForText(text) {
@@ -1997,10 +2074,12 @@ export default {
       } else if (event.key === "Delete") {
         this.deleteSelectedRect();
       } else if (event.key === "ArrowDown") {
+        event.preventDefault();
         if (this.currentImageIndex < this.images.length - 1) {
           this.selectImage(this.currentImageIndex + 1);
         }
       } else if (event.key === "ArrowUp") {
+        event.preventDefault();
         if (this.currentImageIndex > 0) {
           this.selectImage(this.currentImageIndex - 1);
         }
@@ -2315,41 +2394,41 @@ input[type="file"] {
   flex-basis: calc(25% - 8px);
 }
 
-/deep/ .upload-stat-tag.el-tag,
-/deep/ .status-stat-tag.el-tag {
+::v-deep .upload-stat-tag.el-tag,
+::v-deep .status-stat-tag.el-tag {
   border-width: 1px;
 }
 
-/deep/ .upload-stat-tag.el-tag--plain.el-tag--primary,
-/deep/ .status-stat-tag.el-tag--plain.el-tag--primary {
+::v-deep .upload-stat-tag.el-tag--plain.el-tag--primary,
+::v-deep .status-stat-tag.el-tag--plain.el-tag--primary {
   border-color: rgba(45, 99, 239, 0.22);
   background: #eef4ff;
   color: #2d63ef;
 }
 
-/deep/ .upload-stat-tag.el-tag--plain.el-tag--success,
-/deep/ .status-stat-tag.el-tag--plain.el-tag--success {
+::v-deep .upload-stat-tag.el-tag--plain.el-tag--success,
+::v-deep .status-stat-tag.el-tag--plain.el-tag--success {
   border-color: rgba(28, 154, 101, 0.2);
   background: #effaf4;
   color: #128252;
 }
 
-/deep/ .upload-stat-tag.el-tag--plain.el-tag--info,
-/deep/ .status-stat-tag.el-tag--plain.el-tag--info {
+::v-deep .upload-stat-tag.el-tag--plain.el-tag--info,
+::v-deep .status-stat-tag.el-tag--plain.el-tag--info {
   border-color: rgba(104, 116, 136, 0.2);
   background: #f4f7fb;
   color: #556880;
 }
 
-/deep/ .upload-stat-tag.el-tag--plain.el-tag--warning,
-/deep/ .status-stat-tag.el-tag--plain.el-tag--warning {
+::v-deep .upload-stat-tag.el-tag--plain.el-tag--warning,
+::v-deep .status-stat-tag.el-tag--plain.el-tag--warning {
   border-color: rgba(230, 147, 45, 0.24);
   background: #fff7eb;
   color: #c57a1a;
 }
 
-/deep/ .upload-stat-tag.el-tag--plain.el-tag--danger,
-/deep/ .status-stat-tag.el-tag--plain.el-tag--danger {
+::v-deep .upload-stat-tag.el-tag--plain.el-tag--danger,
+::v-deep .status-stat-tag.el-tag--plain.el-tag--danger {
   border-color: rgba(220, 84, 84, 0.22);
   background: #fff1f1;
   color: #d75050;
@@ -2369,6 +2448,8 @@ input[type="file"] {
   flex: none;
   min-height: auto;
   overflow: visible;
+  padding-top: 0;
+  padding-bottom: 0;
   padding-right: 0;
 }
 .thumbnail {
@@ -2458,11 +2539,11 @@ input[type="file"] {
   cursor: grabbing;
 }
 .thumbnail.active {
-  border-width: 2px;
-  border-color: #4d6fff;
+  border-width: 4px;
+  border-color: #3f67ff;
   box-shadow:
-    0 0 0 4px rgba(77, 111, 255, 0.12),
-    0 18px 34px rgba(77, 111, 255, 0.24);
+    0 0 0 6px rgba(77, 111, 255, 0.14),
+    0 20px 36px rgba(77, 111, 255, 0.28);
 }
 .thumb-header {
   position: sticky;
@@ -2499,10 +2580,10 @@ input[type="file"] {
   margin-top: 6px;
   min-height: 0;
 }
-/deep/ .tool-form .el-form-item {
+::v-deep .tool-form .el-form-item {
   margin-bottom: 14px;
 }
-/deep/ .tool-form .el-form-item__content {
+::v-deep .tool-form .el-form-item__content {
   width: 100%;
 }
 .annotation-list-item {
@@ -2510,12 +2591,12 @@ input[type="file"] {
   flex: 1 1 auto;
   min-height: 0;
 }
-/deep/ .annotation-list-item .el-form-item__content {
+::v-deep .annotation-list-item .el-form-item__content {
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
 }
-/deep/ .tool-select .el-input__inner {
+::v-deep .tool-select .el-input__inner {
   height: 46px;
   border-radius: 14px;
   border-color: #dce4f2;
@@ -2524,29 +2605,29 @@ input[type="file"] {
   font-weight: 600;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92);
 }
-/deep/ .tool-select .el-input__inner:focus,
-/deep/ .tool-select .el-input.is-focus .el-input__inner {
+::v-deep .tool-select .el-input__inner:focus,
+::v-deep .tool-select .el-input.is-focus .el-input__inner {
   border-color: #6d84f7;
   box-shadow: 0 0 0 3px rgba(109, 132, 247, 0.12);
 }
-/deep/ .tool-button.el-button {
+::v-deep .tool-button.el-button {
   width: 100%;
   height: 46px;
   border-radius: 14px;
   font-size: 15px;
   font-weight: 700;
 }
-/deep/ .tool-button.el-button--primary {
+::v-deep .tool-button.el-button--primary {
   border-color: transparent;
   background: linear-gradient(135deg, #2f67ee 0%, #4e80f6 100%);
   box-shadow: 0 14px 24px rgba(47, 103, 238, 0.22);
 }
-/deep/ .tool-button.el-button--danger {
+::v-deep .tool-button.el-button--danger {
   border-color: #f2cece;
   background: linear-gradient(180deg, #fff8f8 0%, #fff1f1 100%);
   color: #df5b5b;
 }
-/deep/ .tool-button.el-button--success {
+::v-deep .tool-button.el-button--success {
   border-color: #cadbfd;
   background: linear-gradient(180deg, #f7faff 0%, #eef4ff 100%);
   color: #2d63ef;
@@ -2556,7 +2637,7 @@ input[type="file"] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
-/deep/ .tool-icon-button.el-button {
+::v-deep .tool-icon-button.el-button {
   width: 100%;
   height: 44px;
   border-radius: 14px;
@@ -2578,7 +2659,7 @@ input[type="file"] {
   background: linear-gradient(180deg, #fbfcff 0%, #f7f9fc 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.94);
 }
-/deep/ .annotation-radio-group .el-radio {
+::v-deep .annotation-radio-group .el-radio {
   display: flex;
   align-items: center;
   margin-right: 0;
@@ -2589,24 +2670,24 @@ input[type="file"] {
   background: #ffffff;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
-/deep/ .annotation-radio-group .el-radio:last-child {
+::v-deep .annotation-radio-group .el-radio:last-child {
   margin-bottom: 0;
 }
-/deep/ .annotation-radio-group .el-radio.is-checked {
+::v-deep .annotation-radio-group .el-radio.is-checked {
   border-color: #96a9ff;
   background: #f5f7ff;
   box-shadow: 0 8px 18px rgba(77, 111, 255, 0.1);
 }
-/deep/ .annotation-radio-group .el-radio__label {
+::v-deep .annotation-radio-group .el-radio__label {
   white-space: normal;
   line-height: 1.45;
   color: #1d2f48;
   font-weight: 600;
 }
-/deep/ .annotation-radio-group .el-radio__input.is-checked + .el-radio__label {
+::v-deep .annotation-radio-group .el-radio__input.is-checked + .el-radio__label {
   color: #2048b3;
 }
-/deep/ .tool-form .el-alert {
+::v-deep .tool-form .el-alert {
   border-radius: 16px;
 }
 .annotation-count-text {
