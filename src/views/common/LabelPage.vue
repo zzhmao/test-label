@@ -241,6 +241,34 @@
       </el-form>
       </div>
     </el-aside>
+    <el-dialog
+      title="ラベルを選択"
+      :visible.sync="labelDialogVisible"
+      width="360px"
+      append-to-body
+      :close-on-click-modal="false"
+      @closed="handleLabelDialogClosed"
+    >
+      <el-select
+        v-model="pendingLabelText"
+        class="label-dialog-select"
+        filterable
+        placeholder="ラベルを選択"
+      >
+        <el-option
+          v-for="option in options"
+          :key="option"
+          :label="option"
+          :value="option"
+        />
+      </el-select>
+      <span slot="footer" class="dialog-footer">
+        <el-button @click="labelDialogVisible = false">キャンセル</el-button>
+        <el-button type="primary" @click="confirmPendingLabelSelection">
+          決定
+        </el-button>
+      </span>
+    </el-dialog>
   </el-container>
 </template>
 
@@ -289,6 +317,12 @@ export default {
       scaleFactor: 1,
       panX: 0,
       panY: 0,
+      drawingCleanup: null,
+      labelDialogVisible: false,
+      pendingLabelText: "",
+      pendingDrawRectData: null,
+      editingAnnotationTarget: null,
+      isApplyingAnnotationHistory: false,
       isSpacePressed: false,
       isPanning: false,
       isAnnotationPreviewHidden: false,
@@ -330,6 +364,7 @@ export default {
     this.canvas.on("selection:created", (e) => this.onCanvasSelection(e));
     this.canvas.on("selection:updated", (e) => this.onCanvasSelection(e));
     this.canvas.on("selection:cleared", () => this.onCanvasSelectionCleared());
+    this.canvas.on("object:modified", this.handleAnnotationObjectModified);
     this.canvas.on("mouse:down", this.handleCanvasMouseDown);
     this.canvas.on("mouse:move", this.handleCanvasMouseMove);
     this.canvas.on("mouse:up", this.handleCanvasMouseUp);
@@ -345,6 +380,7 @@ export default {
     window.removeEventListener("mouseup", this.handleGlobalMouseUp);
     window.removeEventListener("beforeunload", this.handleBeforeUnload);
     if (this.canvas) {
+      this.canvas.off("object:modified", this.handleAnnotationObjectModified);
       this.canvas.off("mouse:down", this.handleCanvasMouseDown);
       this.canvas.off("mouse:move", this.handleCanvasMouseMove);
       this.canvas.off("mouse:up", this.handleCanvasMouseUp);
@@ -610,6 +646,369 @@ export default {
     },
     handleGlobalMouseUp() {
       this.stopPan();
+    },
+    handleLabelDialogClosed() {
+      this.pendingDrawRectData = null;
+      this.pendingLabelText = "";
+      this.editingAnnotationTarget = null;
+    },
+    getClassKeyByText(text) {
+      return Object.keys(this.classDictionary).find(
+        (key) => this.classDictionary[key] === text
+      );
+    },
+    configureAnnotationGroup(group, { editable = true } = {}) {
+      if (!group) {
+        return group;
+      }
+      group.set({
+        originX: "left",
+        originY: "top",
+        selectable: true,
+        hasControls: editable,
+        lockMovementX: !editable,
+        lockMovementY: !editable,
+        lockRotation: true,
+        hasRotatingPoint: false,
+        transparentCorners: false,
+        cornerStyle: "circle",
+        padding: 2,
+        hoverCursor: editable ? "move" : "crosshair",
+        moveCursor: editable ? "move" : "crosshair",
+      });
+      if (group.setControlsVisibility) {
+        group.setControlsVisibility({ mtr: false });
+      }
+      return group;
+    },
+    findAnnotationByGroup(
+      group,
+      fileName = this.fileNames[this.currentImageIndex]
+    ) {
+      const annotations = this.annotations[fileName] || [];
+      const index = annotations.findIndex(
+        (annotation) => annotation.fabricGroup === group
+      );
+      if (index === -1) {
+        return null;
+      }
+      return {
+        fileName,
+        index,
+        annotation: annotations[index],
+      };
+    },
+    createAnnotationSnapshot(annotation) {
+      if (!annotation) {
+        return null;
+      }
+      return {
+        text: annotation.text,
+        class: annotation.class,
+        relative: annotation.relative
+          ? {
+              left: annotation.relative.left,
+              top: annotation.relative.top,
+              width: annotation.relative.width,
+              height: annotation.relative.height,
+            }
+          : null,
+        fill: annotation.fill,
+        conf: annotation.conf,
+      };
+    },
+    areAnnotationSnapshotsEqual(leftSnapshot, rightSnapshot) {
+      if (!leftSnapshot || !rightSnapshot) {
+        return false;
+      }
+      return JSON.stringify(leftSnapshot) === JSON.stringify(rightSnapshot);
+    },
+    getNormalizedRelativeFromGroup(group) {
+      if (!group || !this.canvas || !this.canvas.backgroundImage) {
+        return null;
+      }
+      const rect = group.item(0);
+      const img = this.canvas.backgroundImage;
+      const relativeLeft = (group.left - img.left) / img.getScaledWidth();
+      const relativeTop = (group.top - img.top) / img.getScaledHeight();
+      const relativeWidth =
+        (rect.width * (group.scaleX || 1)) / img.getScaledWidth();
+      const relativeHeight =
+        (rect.height * (group.scaleY || 1)) / img.getScaledHeight();
+      return this.normalizeRelativeBox({
+        left: relativeLeft,
+        top: relativeTop,
+        width: relativeWidth,
+        height: relativeHeight,
+      });
+    },
+    applyAnnotationSnapshot(
+      fileName,
+      annotation,
+      snapshot,
+      { activate = false } = {}
+    ) {
+      if (!annotation || !snapshot) {
+        return;
+      }
+      const normalizedRelative = this.normalizeRelativeBox(snapshot.relative);
+      if (
+        !normalizedRelative ||
+        normalizedRelative.width <= 0 ||
+        normalizedRelative.height <= 0
+      ) {
+        return;
+      }
+      annotation.text = snapshot.text;
+      annotation.class = snapshot.class;
+      annotation.relative = normalizedRelative;
+      annotation.fill = snapshot.fill;
+      if (Object.prototype.hasOwnProperty.call(snapshot, "conf")) {
+        annotation.conf = snapshot.conf;
+      }
+      this.$set(this.annotationSources, fileName, "manual");
+
+      const isCurrentFile = this.fileNames[this.currentImageIndex] === fileName;
+      if (isCurrentFile && this.canvas && this.canvas.backgroundImage) {
+        const previousGroup = annotation.fabricGroup;
+        const rebuiltGroup = this.buildFabricAnnotation(
+          annotation,
+          this.canvas.backgroundImage
+        );
+        if (previousGroup) {
+          this.canvas.remove(previousGroup);
+        }
+        if (rebuiltGroup) {
+          this.configureAnnotationGroup(rebuiltGroup, {
+            editable: !this.isDrawing,
+          });
+          this.canvas.add(rebuiltGroup);
+          if (activate && !this.isDrawing) {
+            this.canvas.setActiveObject(rebuiltGroup);
+          }
+        }
+      } else {
+        annotation.fabricGroup = null;
+      }
+
+      this.refreshAnnotationSidebar();
+      if (this.canvas) {
+        this.canvas.renderAll();
+      }
+    },
+    syncAnnotationFromGroup(group) {
+      if (!group || group.type !== "group") {
+        return null;
+      }
+      const found = this.findAnnotationByGroup(group);
+      if (!found) {
+        return null;
+      }
+      const normalizedRelative = this.getNormalizedRelativeFromGroup(group);
+      if (!normalizedRelative) {
+        return null;
+      }
+      const rect = group.item(0);
+      const textObj = group.item(1);
+      const nextSnapshot = {
+        text: textObj.text,
+        class: this.getClassKeyByText(textObj.text) || found.annotation.class,
+        relative: normalizedRelative,
+        fill: rect.stroke || found.annotation.fill,
+        conf: found.annotation.conf,
+      };
+      this.applyAnnotationSnapshot(found.fileName, found.annotation, nextSnapshot, {
+        activate: true,
+      });
+      return {
+        fileName: found.fileName,
+        annotation: found.annotation,
+        snapshot: nextSnapshot,
+      };
+    },
+    handleAnnotationObjectModified(option) {
+      const group = option && option.target;
+      if (
+        !group ||
+        group.type !== "group" ||
+        this.isDrawing ||
+        this.isApplyingAnnotationHistory
+      ) {
+        return;
+      }
+      const found = this.findAnnotationByGroup(group);
+      if (!found) {
+        return;
+      }
+      const beforeSnapshot = this.createAnnotationSnapshot(found.annotation);
+      const syncResult = this.syncAnnotationFromGroup(group);
+      if (!syncResult) {
+        return;
+      }
+      const afterSnapshot = this.createAnnotationSnapshot(syncResult.annotation);
+      if (this.areAnnotationSnapshotsEqual(beforeSnapshot, afterSnapshot)) {
+        return;
+      }
+      this.undoStack.push({
+        type: "update",
+        fileName: syncResult.fileName,
+        annotation: syncResult.annotation,
+        beforeSnapshot,
+        afterSnapshot,
+      });
+      this.redoStack = [];
+    },
+    openEditSelectedAnnotationLabelDialog() {
+      if (this.isDrawing) {
+        this.$message.warning(
+          "編集中のラベルを変更する前に、描画モードを終了してください。"
+        );
+        return;
+      }
+      const activeObject = this.canvas && this.canvas.getActiveObject();
+      if (activeObject && activeObject.type === "activeSelection") {
+        this.$message.warning("複数選択したラベルは一括変更できません。");
+        return;
+      }
+      if (!activeObject || activeObject.type !== "group") {
+        this.$message.warning("変更するラベルを先に選択してください。");
+        return;
+      }
+      const found = this.findAnnotationByGroup(activeObject);
+      if (!found) {
+        this.$message.warning("ラベル情報が見つかりません。");
+        return;
+      }
+      this.pendingDrawRectData = null;
+      this.pendingLabelText = found.annotation.text || this.options[0] || "";
+      this.editingAnnotationTarget = {
+        fileName: found.fileName,
+        index: found.index,
+        annotation: found.annotation,
+        group: activeObject,
+      };
+      this.labelDialogVisible = true;
+    },
+    buildManualAnnotationGroup(rectData, labelText) {
+      if (!rectData || !labelText) {
+        return null;
+      }
+      const strokeColor = this.getColorForText(labelText);
+      const rect = new fabric.Rect({
+        left: rectData.left,
+        top: rectData.top,
+        width: rectData.width,
+        height: rectData.height,
+        fill: "rgba(144,238,144, 0.5)",
+        stroke: strokeColor,
+        strokeWidth: 5,
+        selectable: false,
+        evented: false,
+      });
+      const textObj = new fabric.Text(labelText, {
+        left: rectData.left + rectData.width / 20,
+        top: rectData.top + rectData.height / 20,
+        originX: "left",
+        originY: "top",
+        fontSize: 20,
+        fill: "#000",
+        selectable: false,
+        evented: false,
+      });
+      const group = new fabric.Group([rect, textObj], {
+        left: rectData.left,
+        top: rectData.top,
+        originX: "left",
+        originY: "top",
+      });
+      group.visible = !this.isAnnotationPreviewHidden;
+      return this.configureAnnotationGroup(group, { editable: !this.isDrawing });
+    },
+    confirmPendingLabelSelection() {
+      const labelText =
+        this.pendingLabelText || this.selectedText || this.options[0];
+      if (!labelText) {
+        this.$message.error("ラベルを選択してください。");
+        return;
+      }
+      if (this.editingAnnotationTarget) {
+        const { annotation, fileName } = this.editingAnnotationTarget;
+        const beforeSnapshot = this.createAnnotationSnapshot(annotation);
+        const strokeColor = this.getColorForText(labelText);
+        const afterSnapshot = {
+          ...beforeSnapshot,
+          text: labelText,
+          class: this.getClassKeyByText(labelText) || annotation.class,
+          fill: strokeColor,
+        };
+        this.isApplyingAnnotationHistory = true;
+        this.applyAnnotationSnapshot(fileName, annotation, afterSnapshot, {
+          activate: true,
+        });
+        this.isApplyingAnnotationHistory = false;
+        if (!this.areAnnotationSnapshotsEqual(beforeSnapshot, afterSnapshot)) {
+          this.undoStack.push({
+            type: "update",
+            fileName,
+            annotation,
+            beforeSnapshot,
+            afterSnapshot,
+          });
+          this.redoStack = [];
+        }
+        this.selectedText = labelText;
+        this.labelDialogVisible = false;
+        return;
+      }
+      if (!this.pendingDrawRectData) {
+        this.labelDialogVisible = false;
+        return;
+      }
+
+      const group = this.buildManualAnnotationGroup(
+        this.pendingDrawRectData,
+        labelText
+      );
+      if (!group) {
+        this.labelDialogVisible = false;
+        return;
+      }
+
+      this.selectedText = labelText;
+      this.configureAnnotationGroup(group, { editable: !this.isDrawing });
+      this.canvas.add(group);
+      this.saveAnnotation(group);
+
+      const currentFileName = this.fileNames[this.currentImageIndex];
+      const annotationList = this.annotations[currentFileName] || [];
+      const newAnno = annotationList[annotationList.length - 1];
+      if (newAnno) {
+        this.undoStack.push({
+          type: "add",
+          fileName: currentFileName,
+          annotation: newAnno,
+        });
+        this.redoStack = [];
+      }
+
+      if (!this.isDrawing) {
+        this.canvas.setActiveObject(group);
+      }
+      this.canvas.renderAll();
+      this.labelDialogVisible = false;
+    },
+    stopDrawingRect({ closeDialog = true } = {}) {
+      if (closeDialog && this.labelDialogVisible) {
+        this.labelDialogVisible = false;
+      }
+      const cleanup = this.drawingCleanup;
+      if (cleanup) {
+        this.drawingCleanup = null;
+        cleanup();
+      }
+      this.pendingDrawRectData = null;
+      this.pendingLabelText = "";
+      this.editingAnnotationTarget = null;
     },
     setAnnotationPreviewHidden(hidden) {
       if (!this.canvas || this.isAnnotationPreviewHidden === hidden) {
@@ -887,8 +1286,24 @@ export default {
       });
     },
     onCanvasSelection(e) {
-      const activeObj = e.selected && e.selected[0];
-      if (!activeObj || activeObj.type !== "group") return;
+      const activeObj = this.canvas && this.canvas.getActiveObject();
+      if (!activeObj) {
+        this.selectedAnnoRadio = null;
+        return;
+      }
+      if (activeObj.type === "activeSelection") {
+        activeObj.set({
+          lockMovementX: true,
+          lockMovementY: true,
+          lockRotation: true,
+          hasControls: false,
+          hasRotatingPoint: false,
+        });
+        this.canvas.renderAll();
+        this.selectedAnnoRadio = null;
+        return;
+      }
+      if (activeObj.type !== "group") return;
       const currentFileName = this.fileNames[this.currentImageIndex];
       const currentAnnotations = this.annotations[currentFileName] || [];
       const foundIndex = currentAnnotations.findIndex(
@@ -936,7 +1351,9 @@ export default {
     initCanvas() {
       this.canvas = new fabric.Canvas("canvas");
       this.resizeCanvas();
-      this.canvas.selection = false;
+      this.canvas.selection = true;
+      this.canvas.selectionKey = "shiftKey";
+      this.canvas.preserveObjectStacking = true;
       this.canvas.hoverCursor = "pointer";
       this.canvas.backgroundColor = "lightgray";
       this.canvas.renderAll();
@@ -1557,9 +1974,15 @@ export default {
         );
         return;
       }
-      if (!this.selectedText) {
+      if (this.labelDialogVisible) {
         this.$message.error(
-          "\u307e\u305a\u30ab\u30c6\u30b4\u30ea\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+          "\u30e9\u30d9\u30eb\u9078\u629e\u30c0\u30a4\u30a2\u30ed\u30b0\u3092\u5148\u306b\u9589\u3058\u3066\u304f\u3060\u3055\u3044\u3002"
+        );
+        return;
+      }
+      if (!this.options.length) {
+        this.$message.error(
+          "\u5229\u7528\u3067\u304d\u308b\u30e9\u30d9\u30eb\u304c\u3042\u308a\u307e\u305b\u3093\u3002"
         );
         return;
       }
@@ -1587,19 +2010,32 @@ export default {
       let origX = 0;
       let origY = 0;
 
-      const strokeColor = this.getColorForText(this.selectedText);
+      const strokeColor = this.selectedText
+        ? this.getColorForText(this.selectedText)
+        : "rgba(109, 132, 247, 0.9)";
       const fillColor = "rgba(144,238,144, 0.5)";
 
       const cleanupDrawingMode = () => {
+        if (rect) {
+          this.canvas.remove(rect);
+          rect = null;
+        }
         this.isDrawing = false;
         this.canvas.defaultCursor = "default";
         this.canvas.selection = true;
+        if (this.drawingCleanup === cleanupDrawingMode) {
+          this.drawingCleanup = null;
+        }
 
         this.canvas.forEachObject((obj) => {
           obj.selectable = true;
-          obj.hasControls = false;
-          obj.hoverCursor = "move";
-          obj.moveCursor = "move";
+          if (obj.type === "group") {
+            this.configureAnnotationGroup(obj, { editable: true });
+          } else {
+            obj.hasControls = false;
+            obj.hoverCursor = "move";
+            obj.moveCursor = "move";
+          }
         });
 
         this.canvas.off("mouse:down", onMouseDown);
@@ -1608,6 +2044,7 @@ export default {
 
         this.canvas.renderAll();
       };
+      this.drawingCleanup = cleanupDrawingMode;
 
       const onMouseDown = (o) => {
         let pointer = this.canvas.getPointer(o.e);
@@ -1656,7 +2093,6 @@ export default {
 
       const onMouseUp = () => {
         if (!rect) {
-          cleanupDrawingMode();
           return;
         }
 
@@ -1689,49 +2125,21 @@ export default {
           this.$message.info(
             "\u30e9\u30d9\u30eb\u304c\u5c0f\u3055\u3059\u304e\u308b\u305f\u3081\u30ad\u30e3\u30f3\u30bb\u30eb\u3057\u307e\u3057\u305f\u3002"
           );
-          cleanupDrawingMode();
+          this.canvas.renderAll();
           return;
         }
 
-        const textObj = new fabric.Text(this.selectedText, {
-          left: rect.left + rect.width / 20,
-          top: rect.top + rect.height / 20,
-          originX: "left",
-          originY: "top",
-          fontSize: 20,
-          fill: "#000",
-          selectable: false,
-          evented: false,
-        });
-
-        this.canvas.remove(rect);
-
-        const group = new fabric.Group([rect, textObj], {
+        const pendingRectData = {
           left: rect.left,
           top: rect.top,
-          selectable: true,
-          hasControls: false,
-          lockMovementX: true,
-          lockMovementY: true,
-        });
-
-        this.canvas.add(group);
-
-        this.saveAnnotation(group);
-
-        const currentFileName = this.fileNames[this.currentImageIndex];
-        const annotationList = this.annotations[currentFileName] || [];
-        const newAnno = annotationList[annotationList.length - 1];
-        if (newAnno) {
-          this.undoStack.push({
-            type: "add",
-            fileName: currentFileName,
-            annotation: newAnno,
-          });
-          this.redoStack = [];
-        }
-
-        cleanupDrawingMode();
+          width: rect.width,
+          height: rect.height,
+        };
+        this.canvas.remove(rect);
+        rect = null;
+        this.pendingDrawRectData = pendingRectData;
+        this.pendingLabelText = this.selectedText || this.options[0] || "";
+        this.labelDialogVisible = true;
       };
 
       this.canvas.on("mouse:down", onMouseDown);
@@ -1740,36 +2148,53 @@ export default {
     },
     deleteSelectedRect() {
       const activeObject = this.canvas.getActiveObject();
-      if (activeObject && activeObject.type === "group") {
-        const rect = activeObject.item(0);
-        const text = activeObject.item(1);
-        const img = this.canvas.backgroundImage;
-        const relativeLeft =
-          (activeObject.left - img.left) / img.getScaledWidth();
-        const relativeTop =
-          (activeObject.top - img.top) / img.getScaledHeight();
-        const relativeWidth = (rect.width * rect.scaleX) / img.getScaledWidth();
-        const relativeHeight =
-          (rect.height * rect.scaleY) / img.getScaledHeight();
-        const normalizedRelative = this.normalizeRelativeBox({
-          left: relativeLeft,
-          top: relativeTop,
-          width: relativeWidth,
-          height: relativeHeight,
-        });
+      if (activeObject && activeObject.type === "activeSelection") {
         const currentFileName = this.fileNames[this.currentImageIndex];
-        const annotationIndex = this.annotations[
-          currentFileName
-        ]?.findIndex((annotation) => {
-          return (
-            normalizedRelative &&
-            Math.abs(annotation.relative.left - normalizedRelative.left) < 0.001 &&
-            Math.abs(annotation.relative.top - normalizedRelative.top) < 0.001 &&
-            Math.abs(annotation.relative.width - normalizedRelative.width) < 0.001 &&
-            Math.abs(annotation.relative.height - normalizedRelative.height) < 0.001 &&
-            annotation.text === text.text
+        const deleteTargets = activeObject
+          .getObjects()
+          .filter((obj) => obj.type === "group")
+          .map((group) => {
+            const found = this.findAnnotationByGroup(group, currentFileName);
+            return found
+              ? {
+                  fileName: currentFileName,
+                  annotation: found.annotation,
+                }
+              : null;
+          })
+          .filter(Boolean);
+        if (deleteTargets.length === 0) {
+          this.$message.warning(
+            "\u9078\u629e\u3055\u308c\u305f\u30e9\u30d9\u30eb\u304c\u3042\u308a\u307e\u305b\u3093\u3002"
           );
+          return;
+        }
+        this.undoStack.push({
+          type: "delete-multiple",
+          items: deleteTargets,
         });
+        this.redoStack = [];
+        deleteTargets.forEach(({ fileName, annotation }) => {
+          const annoArr = this.annotations[fileName];
+          if (annoArr) {
+            const idx = annoArr.indexOf(annotation);
+            if (idx !== -1) {
+              annoArr.splice(idx, 1);
+            }
+          }
+          this.$set(this.annotationSources, fileName, "manual");
+          if (annotation.fabricGroup) {
+            this.canvas.remove(annotation.fabricGroup);
+          }
+        });
+        this.canvas.discardActiveObject();
+        this.$message.success(
+          "\u9078\u629e\u3055\u308c\u305f\u30e9\u30d9\u30eb\u3092\u524a\u9664\u3057\u307e\u3057\u305f\u3002"
+        );
+      } else if (activeObject && activeObject.type === "group") {
+        const currentFileName = this.fileNames[this.currentImageIndex];
+        const found = this.findAnnotationByGroup(activeObject, currentFileName);
+        const annotationIndex = found ? found.index : -1;
         if (annotationIndex !== -1) {
           const removed = this.annotations[currentFileName][annotationIndex];
           this.undoStack.push({
@@ -1814,6 +2239,20 @@ export default {
             }
           }
         }
+      } else if (lastAction.type === "delete-multiple") {
+        lastAction.items.forEach(({ fileName, annotation }) => {
+          if (!this.annotations[fileName]) {
+            this.annotations[fileName] = [];
+          }
+          this.annotations[fileName].push(annotation);
+          this.$set(this.annotationSources, fileName, "manual");
+          if (annotation.fabricGroup) {
+            this.configureAnnotationGroup(annotation.fabricGroup, {
+              editable: !this.isDrawing,
+            });
+            this.canvas.add(annotation.fabricGroup);
+          }
+        });
       } else if (lastAction.type === "delete") {
         const { fileName, annotation } = lastAction;
         if (!this.annotations[fileName]) {
@@ -1822,8 +2261,18 @@ export default {
         this.annotations[fileName].push(annotation);
         this.$set(this.annotationSources, fileName, "manual");
         if (annotation.fabricGroup) {
+          this.configureAnnotationGroup(annotation.fabricGroup, {
+            editable: !this.isDrawing,
+          });
           this.canvas.add(annotation.fabricGroup);
         }
+      } else if (lastAction.type === "update") {
+        const { fileName, annotation, beforeSnapshot } = lastAction;
+        this.isApplyingAnnotationHistory = true;
+        this.applyAnnotationSnapshot(fileName, annotation, beforeSnapshot, {
+          activate: true,
+        });
+        this.isApplyingAnnotationHistory = false;
       }
       this.canvas.renderAll();
       this.refreshAnnotationSidebar();
@@ -1845,8 +2294,25 @@ export default {
         this.annotations[fileName].push(annotation);
         this.$set(this.annotationSources, fileName, "manual");
         if (annotation.fabricGroup) {
+          this.configureAnnotationGroup(annotation.fabricGroup, {
+            editable: !this.isDrawing,
+          });
           this.canvas.add(annotation.fabricGroup);
         }
+      } else if (action.type === "delete-multiple") {
+        action.items.forEach(({ fileName, annotation }) => {
+          const annoArr = this.annotations[fileName];
+          if (annoArr) {
+            const idx = annoArr.indexOf(annotation);
+            if (idx !== -1) {
+              annoArr.splice(idx, 1);
+            }
+          }
+          this.$set(this.annotationSources, fileName, "manual");
+          if (annotation.fabricGroup) {
+            this.canvas.remove(annotation.fabricGroup);
+          }
+        });
       } else if (action.type === "delete") {
         const { fileName, annotation } = action;
         const annoArr = this.annotations[fileName];
@@ -1860,25 +2326,21 @@ export default {
             }
           }
         }
+      } else if (action.type === "update") {
+        const { fileName, annotation, afterSnapshot } = action;
+        this.isApplyingAnnotationHistory = true;
+        this.applyAnnotationSnapshot(fileName, annotation, afterSnapshot, {
+          activate: true,
+        });
+        this.isApplyingAnnotationHistory = false;
       }
       this.canvas.renderAll();
       this.refreshAnnotationSidebar();
     },
     saveAnnotation(group) {
-      const rect = group.item(0);
       const text = group.item(1).text;
-      const img = this.canvas.backgroundImage;
-      const relativeLeft = (group.left - img.left) / img.getScaledWidth();
-      const relativeTop = (group.top - img.top) / img.getScaledHeight();
-      const relativeWidth = (rect.width * rect.scaleX) / img.getScaledWidth();
-      const relativeHeight =
-        (rect.height * rect.scaleY) / img.getScaledHeight();
-      const normalizedRelative = this.normalizeRelativeBox({
-        left: relativeLeft,
-        top: relativeTop,
-        width: relativeWidth,
-        height: relativeHeight,
-      });
+      const rect = group.item(0);
+      const normalizedRelative = this.getNormalizedRelativeFromGroup(group);
       if (
         !normalizedRelative ||
         normalizedRelative.width <= 0 ||
@@ -1886,9 +2348,7 @@ export default {
       ) {
         return;
       }
-      const classKey = Object.keys(this.classDictionary).find(
-        (key) => this.classDictionary[key] === text
-      );
+      const classKey = this.getClassKeyByText(text);
       const annotationData = {
         text: group.item(1).text,
         class: classKey || null,
@@ -1946,14 +2406,12 @@ export default {
       const group = new fabric.Group([rect, text], {
         left,
         top,
-        selectable: true,
-        hasControls: false,
-        lockMovementX: true,
-        lockMovementY: true,
+        originX: "left",
+        originY: "top",
       });
       group.visible = !this.isAnnotationPreviewHidden;
       annotation.fabricGroup = group;
-      return group;
+      return this.configureAnnotationGroup(group, { editable: !this.isDrawing });
     },
     restoreAnnotations() {
       const currentFileName = this.fileNames[this.currentImageIndex];
@@ -1993,21 +2451,32 @@ export default {
         this.canvas.renderAll();
         return;
       }
+      const requestImg = this.canvas.backgroundImage;
+      const requestScaledWidth = requestImg ? requestImg.getScaledWidth() : 0;
+      const requestScaledHeight = requestImg ? requestImg.getScaledHeight() : 0;
       this.lockImageSwitchForServerRequest(currentFileName);
       this.sendImageToServer(this.currentImageIndex)
         .then((response) => {
           const result = response?.result;
           if (Array.isArray(result) && result.length > 0) {
             const img = this.canvas.backgroundImage;
-            const scaledWidth = img.getScaledWidth();
-            const scaledHeight = img.getScaledHeight();
+            const normalizationWidth =
+              requestScaledWidth || (img ? img.getScaledWidth() : 0);
+            const normalizationHeight =
+              requestScaledHeight || (img ? img.getScaledHeight() : 0);
+            if (!normalizationWidth || !normalizationHeight) {
+              this.$set(this.annotations, currentFileName, []);
+              this.refreshAnnotationSidebar();
+              this.releaseImageSwitchForServerRequest(currentFileName);
+              return;
+            }
             const newAnnotations = result
               .map((item) => {
                 const normalizedRelative = this.normalizeRelativeBox({
-                  left: item.x0 / scaledWidth,
-                  top: item.y0 / scaledHeight,
-                  width: (item.x1 - item.x0) / scaledWidth,
-                  height: (item.y1 - item.y0) / scaledHeight,
+                  left: item.x0 / normalizationWidth,
+                  top: item.y0 / normalizationHeight,
+                  width: (item.x1 - item.x0) / normalizationWidth,
+                  height: (item.y1 - item.y0) / normalizationHeight,
                 });
                 if (
                   !normalizedRelative ||
@@ -2056,6 +2525,17 @@ export default {
     },
     handleKeyDown(event) {
       if (this.isEditableTarget(event.target)) {
+        return;
+      }
+      if (event.key === "Escape" && this.isDrawing) {
+        event.preventDefault();
+        this.stopDrawingRect();
+        this.$message.info(
+          "\u63cf\u753b\u3092\u30ad\u30e3\u30f3\u30bb\u30eb\u3057\u307e\u3057\u305f\u3002"
+        );
+        return;
+      }
+      if (this.labelDialogVisible) {
         return;
       }
       const normalizedKey = event.key.toLowerCase();
@@ -2115,6 +2595,12 @@ export default {
         return;
       }
 
+      if (!isModifierPressed && normalizedKey === "r") {
+        event.preventDefault();
+        this.openEditSelectedAnnotationLabelDialog();
+        return;
+      }
+
       if (!isModifierPressed && normalizedKey === "q") {
         event.preventDefault();
         this.selectCategoryByOffset(-1);
@@ -2138,21 +2624,7 @@ export default {
         return;
       }
 
-      if (event.key === "Escape" && this.isDrawing) {
-        this.isDrawing = false;
-        this.canvas.defaultCursor = "default";
-        this.canvas.selection = true;
-        this.canvas.forEachObject((obj) => {
-          obj.selectable = true;
-          obj.hasControls = false;
-          obj.hoverCursor = "move";
-          obj.moveCursor = "move";
-        });
-        this.canvas.off("mouse:down");
-        this.canvas.off("mouse:move");
-        this.canvas.off("mouse:up");
-        this.$message.info("\u63cf\u753b\u3092\u30ad\u30e3\u30f3\u30bb\u30eb\u3057\u307e\u3057\u305f\u3002");
-      } else if (event.key === "Delete") {
+      if (event.key === "Delete") {
         this.deleteSelectedRect();
       } else if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -2660,6 +3132,9 @@ input[type="file"] {
   flex-direction: column;
   margin-top: 6px;
   min-height: 0;
+}
+.label-dialog-select {
+  width: 100%;
 }
 ::v-deep .tool-form .el-form-item {
   margin-bottom: 14px;

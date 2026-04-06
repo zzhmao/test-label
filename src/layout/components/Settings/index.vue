@@ -56,6 +56,21 @@ const BASE_SHORTCUT_SECTIONS = [
           "\u9078\u629e\u4e2d\u306e\u30e9\u30d9\u30eb\u3092\u524a\u9664",
       },
       {
+        keys: "Shift + \u30af\u30ea\u30c3\u30af",
+        description:
+          "\u8907\u6570\u306e\u30e9\u30d9\u30eb\u3092\u8ffd\u52a0\u9078\u629e",
+      },
+      {
+        keys: "\u30c9\u30e9\u30c3\u30b0\u9078\u629e",
+        description:
+          "\u8907\u6570\u306e\u30e9\u30d9\u30eb\u3092\u56f2\u3093\u3067\u9078\u629e",
+      },
+      {
+        keys: "R",
+        description:
+          "\u9078\u629e\u4e2d\u306e\u30e9\u30d9\u30eb\u5185\u5bb9\u3092\u5909\u66f4",
+      },
+      {
         keys: "Ctrl + Z",
         description: "\u53d6\u308a\u6d88\u3057",
       },
