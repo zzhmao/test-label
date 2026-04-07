@@ -71,6 +71,16 @@ const BASE_SHORTCUT_SECTIONS = [
           "\u9078\u629e\u4e2d\u306e\u30e9\u30d9\u30eb\u5185\u5bb9\u3092\u5909\u66f4",
       },
       {
+        keys: "Alt + ArrowUp",
+        description:
+          "\u9078\u629e\u4e2d\u306e\u30e9\u30d9\u30eb\u3092\u524d\u9762\u3078\u79fb\u52d5",
+      },
+      {
+        keys: "Alt + ArrowDown",
+        description:
+          "\u9078\u629e\u4e2d\u306e\u30e9\u30d9\u30eb\u3092\u80cc\u9762\u3078\u79fb\u52d5",
+      },
+      {
         keys: "Ctrl + Z",
         description: "\u53d6\u308a\u6d88\u3057",
       },
@@ -131,6 +141,11 @@ const BASE_SHORTCUT_SECTIONS = [
         keys: "H\uff08\u62bc\u3057\u3066\u3044\u308b\u9593\uff09",
         description:
           "\u3059\u3079\u3066\u306e\u30e9\u30d9\u30eb\u3092\u4e00\u6642\u7684\u306b\u96a0\u3059",
+      },
+      {
+        keys: "J\uff08\u62bc\u3057\u3066\u3044\u308b\u9593\uff09",
+        description:
+          "\u5358\u4e00\u9078\u629e\u4e2d\u306e\u30e9\u30d9\u30eb\u3060\u3051\u3092\u4e00\u6642\u7684\u306b\u96a0\u3059",
       },
     ],
   },
@@ -245,24 +260,29 @@ export default {
 
   .shortcut-item {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: 16px;
     padding: 6px 0;
     border-bottom: 1px solid #f0f0f0;
+    flex-wrap: nowrap;
   }
 
   .shortcut-keys {
-    min-width: 112px;
+    min-width: 132px;
     color: #409eff;
     font-weight: 600;
     white-space: nowrap;
+    flex: 0 0 auto;
   }
 
   .shortcut-desc {
-    flex: 1;
+    flex: 1 1 auto;
     color: rgba(0, 0, 0, 0.65);
     text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .empty-text {

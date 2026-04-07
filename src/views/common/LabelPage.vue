@@ -215,6 +215,7 @@
             v-model="selectedAnnoRadio"
             class="annotation-radio-group"
             @change="handleAnnoRadioChange"
+            @keydown.native.capture="handleAnnotationListKeyDown"
           >
             <el-radio
               v-for="(item, idx) in confidenceList"
@@ -326,7 +327,9 @@ export default {
       isSpacePressed: false,
       isPanning: false,
       isAnnotationPreviewHidden: false,
+      isSelectedAnnotationPreviewHidden: false,
       hiddenActiveObject: null,
+      hiddenSelectedObjects: [],
       panStartClientX: 0,
       panStartClientY: 0,
       panOriginX: 0,
@@ -638,11 +641,15 @@ export default {
       if (event.key && event.key.toLowerCase() === "h") {
         this.setAnnotationPreviewHidden(false);
       }
+      if (event.key && event.key.toLowerCase() === "j") {
+        this.setSelectedAnnotationPreviewHidden(false);
+      }
     },
     handleWindowBlur() {
       this.isSpacePressed = false;
       this.stopPan();
       this.setAnnotationPreviewHidden(false);
+      this.setSelectedAnnotationPreviewHidden(false);
     },
     handleGlobalMouseUp() {
       this.stopPan();
@@ -698,10 +705,15 @@ export default {
         annotation: annotations[index],
       };
     },
-    createAnnotationSnapshot(annotation) {
+    createAnnotationSnapshot(
+      annotation,
+      fileName = this.fileNames[this.currentImageIndex]
+    ) {
       if (!annotation) {
         return null;
       }
+      const annotationList = this.annotations[fileName] || [];
+      const orderIndex = annotationList.indexOf(annotation);
       return {
         text: annotation.text,
         class: annotation.class,
@@ -715,6 +727,7 @@ export default {
           : null,
         fill: annotation.fill,
         conf: annotation.conf,
+        orderIndex: orderIndex >= 0 ? orderIndex : null,
       };
     },
     areAnnotationSnapshotsEqual(leftSnapshot, rightSnapshot) {
@@ -766,6 +779,9 @@ export default {
       if (Object.prototype.hasOwnProperty.call(snapshot, "conf")) {
         annotation.conf = snapshot.conf;
       }
+      if (Number.isInteger(snapshot.orderIndex) && snapshot.orderIndex >= 0) {
+        this.moveAnnotationToIndex(fileName, annotation, snapshot.orderIndex);
+      }
       this.$set(this.annotationSources, fileName, "manual");
 
       const isCurrentFile = this.fileNames[this.currentImageIndex] === fileName;
@@ -783,6 +799,7 @@ export default {
             editable: !this.isDrawing,
           });
           this.canvas.add(rebuiltGroup);
+          this.syncCanvasStackingWithAnnotations(fileName);
           if (activate && !this.isDrawing) {
             this.canvas.setActiveObject(rebuiltGroup);
           }
@@ -826,6 +843,40 @@ export default {
         snapshot: nextSnapshot,
       };
     },
+    moveAnnotationToIndex(fileName, annotation, targetIndex) {
+      const annotationList = this.annotations[fileName] || [];
+      const currentIndex = annotationList.indexOf(annotation);
+      if (currentIndex === -1) {
+        return false;
+      }
+      const clampedIndex = Math.max(
+        0,
+        Math.min(annotationList.length - 1, targetIndex)
+      );
+      if (currentIndex === clampedIndex) {
+        return false;
+      }
+      annotationList.splice(currentIndex, 1);
+      annotationList.splice(clampedIndex, 0, annotation);
+      return true;
+    },
+    syncCanvasStackingWithAnnotations(
+      fileName = this.fileNames[this.currentImageIndex]
+    ) {
+      if (!this.canvas) {
+        return;
+      }
+      const annotationList = this.annotations[fileName] || [];
+      annotationList.forEach((annotation, index) => {
+        if (
+          annotation &&
+          annotation.fabricGroup &&
+          this.canvas.getObjects().includes(annotation.fabricGroup)
+        ) {
+          this.canvas.moveTo(annotation.fabricGroup, index);
+        }
+      });
+    },
     handleAnnotationObjectModified(option) {
       const group = option && option.target;
       if (
@@ -865,15 +916,17 @@ export default {
         );
         return;
       }
-      const activeObject = this.canvas && this.canvas.getActiveObject();
-      if (activeObject && activeObject.type === "activeSelection") {
+      const currentActiveObject = this.canvas && this.canvas.getActiveObject();
+      if (currentActiveObject && currentActiveObject.type === "activeSelection") {
         this.$message.warning("複数選択したラベルは一括変更できません。");
         return;
       }
+      const activeObject = this.getPrimarySelectedAnnotationGroup();
       if (!activeObject || activeObject.type !== "group") {
         this.$message.warning("変更するラベルを先に選択してください。");
         return;
       }
+      this.canvas.setActiveObject(activeObject);
       const found = this.findAnnotationByGroup(activeObject);
       if (!found) {
         this.$message.warning("ラベル情報が見つかりません。");
@@ -888,6 +941,58 @@ export default {
         group: activeObject,
       };
       this.labelDialogVisible = true;
+    },
+    moveSelectedAnnotationLayer(offset) {
+      if (this.isDrawing || !this.canvas) {
+        return;
+      }
+      const activeObject = this.canvas.getActiveObject();
+      if (activeObject && activeObject.type === "activeSelection") {
+        this.$message.warning("複数選択したラベルの重なり順は変更できません。");
+        return;
+      }
+      const targetGroup = this.getPrimarySelectedAnnotationGroup();
+      if (!targetGroup) {
+        this.$message.warning("重なり順を変更するラベルを先に選択してください。");
+        return;
+      }
+      const currentFileName = this.fileNames[this.currentImageIndex];
+      const found = this.findAnnotationByGroup(targetGroup, currentFileName);
+      if (!found) {
+        this.$message.warning("ラベル情報が見つかりません。");
+        return;
+      }
+      const beforeSnapshot = this.createAnnotationSnapshot(
+        found.annotation,
+        currentFileName
+      );
+      const moved = this.moveAnnotationToIndex(
+        currentFileName,
+        found.annotation,
+        found.index + offset
+      );
+      if (!moved) {
+        return;
+      }
+      this.$set(this.annotationSources, currentFileName, "manual");
+      this.syncCanvasStackingWithAnnotations(currentFileName);
+      this.canvas.setActiveObject(targetGroup);
+      const afterSnapshot = this.createAnnotationSnapshot(
+        found.annotation,
+        currentFileName
+      );
+      if (!this.areAnnotationSnapshotsEqual(beforeSnapshot, afterSnapshot)) {
+        this.undoStack.push({
+          type: "update",
+          fileName: currentFileName,
+          annotation: found.annotation,
+          beforeSnapshot,
+          afterSnapshot,
+        });
+        this.redoStack = [];
+      }
+      this.refreshAnnotationSidebar();
+      this.canvas.renderAll();
     },
     buildManualAnnotationGroup(rectData, labelText) {
       if (!rectData || !labelText) {
@@ -1015,6 +1120,9 @@ export default {
         return;
       }
       if (hidden) {
+        if (this.isSelectedAnnotationPreviewHidden) {
+          this.setSelectedAnnotationPreviewHidden(false);
+        }
         this.hiddenActiveObject = this.canvas.getActiveObject() || null;
         this.canvas.discardActiveObject();
       }
@@ -1034,18 +1142,140 @@ export default {
       }
       this.canvas.renderAll();
     },
+    setSelectedAnnotationPreviewHidden(hidden) {
+      if (
+        !this.canvas ||
+        this.isSelectedAnnotationPreviewHidden === hidden
+      ) {
+        return;
+      }
+
+      if (hidden) {
+        if (this.isAnnotationPreviewHidden) {
+          return;
+        }
+        const activeObject = this.getPrimarySelectedAnnotationGroup();
+        if (!activeObject) {
+          return;
+        }
+        this.hiddenSelectedObjects = [activeObject];
+        this.canvas.setActiveObject(activeObject);
+        this.canvas.discardActiveObject();
+        this.hiddenSelectedObjects.forEach((obj) => {
+          obj.visible = false;
+        });
+        this.isSelectedAnnotationPreviewHidden = true;
+        this.canvas.renderAll();
+        return;
+      }
+
+      const restoreObjects = this.hiddenSelectedObjects.filter(Boolean);
+      restoreObjects.forEach((obj) => {
+        obj.visible = true;
+      });
+      this.hiddenSelectedObjects = [];
+      this.isSelectedAnnotationPreviewHidden = false;
+
+      const currentCanvasObjects = restoreObjects.filter((obj) =>
+        this.canvas.getObjects().includes(obj)
+      );
+      if (currentCanvasObjects.length === 1) {
+        this.canvas.setActiveObject(currentCanvasObjects[0]);
+      } else if (currentCanvasObjects.length > 1) {
+        const activeSelection = new fabric.ActiveSelection(
+          currentCanvasObjects,
+          {
+            canvas: this.canvas,
+          }
+        );
+        activeSelection.set({
+          lockMovementX: true,
+          lockMovementY: true,
+          lockRotation: true,
+          hasControls: false,
+          hasRotatingPoint: false,
+        });
+        this.canvas.setActiveObject(activeSelection);
+      }
+      if (currentCanvasObjects.length > 0) {
+        this.onCanvasSelection();
+      } else {
+        this.onCanvasSelectionCleared();
+      }
+      this.canvas.renderAll();
+    },
+    getPrimarySelectedAnnotationGroup() {
+      if (!this.canvas) {
+        return null;
+      }
+      const activeObject = this.canvas.getActiveObject();
+      if (activeObject && activeObject.type === "group") {
+        return activeObject;
+      }
+      if (
+        this.selectedAnnoRadio === null ||
+        this.selectedAnnoRadio === undefined
+      ) {
+        return null;
+      }
+      const currentFileName = this.fileNames[this.currentImageIndex];
+      const currentAnnotations = this.annotations[currentFileName] || [];
+      const targetAnnotation = currentAnnotations[this.selectedAnnoRadio];
+      const targetGroup = targetAnnotation && targetAnnotation.fabricGroup;
+      if (!targetGroup) {
+        return null;
+      }
+      if (!this.canvas.getObjects().includes(targetGroup)) {
+        return null;
+      }
+      return targetGroup;
+    },
     isEditableTarget(target) {
       if (!target) {
         return false;
       }
       const tagName = target.tagName;
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(tagName)) {
+      if (tagName === "INPUT") {
+        const inputType = (target.type || "").toLowerCase();
+        return [
+          "text",
+          "search",
+          "password",
+          "email",
+          "number",
+          "tel",
+          "url",
+        ].includes(inputType);
+      }
+      if (["TEXTAREA", "SELECT"].includes(tagName)) {
         return true;
       }
       if (target.isContentEditable) {
         return true;
       }
       return !!(target.closest && target.closest(".el-input, .el-textarea"));
+    },
+    isOptionNavigationTarget(target) {
+      if (!target || !target.closest) {
+        return false;
+      }
+      return !!target.closest(
+        ".annotation-radio-group, .el-radio-group, .el-radio, .el-select-dropdown"
+      );
+    },
+    isArrowUpEvent(event) {
+      return (
+        event.key === "ArrowUp" ||
+        event.code === "ArrowUp" ||
+        event.keyCode === 38
+      );
+    },
+    isArrowDownEvent(event) {
+      return (
+        event.key === "ArrowDown" ||
+        event.code === "ArrowDown" ||
+        event.keyCode === 40
+      );
     },
     getViewportSize() {
       if (!this.canvas) {
@@ -1202,6 +1432,22 @@ export default {
         this.canvas.renderAll();
       } else {
         this.selectAnnotation(newVal);
+      }
+    },
+    handleAnnotationListKeyDown(event) {
+      if (!event.altKey) {
+        return;
+      }
+      if (this.isArrowUpEvent(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.moveSelectedAnnotationLayer(1);
+        return;
+      }
+      if (this.isArrowDownEvent(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.moveSelectedAnnotationLayer(-1);
       }
     },
     getThumbnailAsideElement() {
@@ -1408,6 +1654,13 @@ export default {
     refreshAnnotationSidebar() {
       this.confidenceDisplayText = this.generateConfidenceDisplay();
       if (this.confidenceList.length === 0) {
+        this.selectedAnnoRadio = null;
+        return;
+      }
+      const activeObject = this.canvas && this.canvas.getActiveObject();
+      if (activeObject && activeObject.type === "group") {
+        this.onCanvasSelection();
+      } else if (activeObject && activeObject.type === "activeSelection") {
         this.selectedAnnoRadio = null;
       }
     },
@@ -2191,9 +2444,20 @@ export default {
         this.$message.success(
           "\u9078\u629e\u3055\u308c\u305f\u30e9\u30d9\u30eb\u3092\u524a\u9664\u3057\u307e\u3057\u305f\u3002"
         );
-      } else if (activeObject && activeObject.type === "group") {
+      } else {
+        const selectedGroup =
+          activeObject && activeObject.type === "group"
+            ? activeObject
+            : this.getPrimarySelectedAnnotationGroup();
+        if (!selectedGroup) {
+          this.$message.warning(
+            "\u9078\u629e\u3055\u308c\u305f\u30e9\u30d9\u30eb\u304c\u3042\u308a\u307e\u305b\u3093\u3002"
+          );
+          return;
+        }
+        this.canvas.setActiveObject(selectedGroup);
         const currentFileName = this.fileNames[this.currentImageIndex];
-        const found = this.findAnnotationByGroup(activeObject, currentFileName);
+        const found = this.findAnnotationByGroup(selectedGroup, currentFileName);
         const annotationIndex = found ? found.index : -1;
         if (annotationIndex !== -1) {
           const removed = this.annotations[currentFileName][annotationIndex];
@@ -2205,15 +2469,15 @@ export default {
           this.redoStack = [];
           this.annotations[currentFileName].splice(annotationIndex, 1);
           this.$set(this.annotationSources, currentFileName, "manual");
-          this.canvas.remove(activeObject);
+          this.canvas.remove(selectedGroup);
           this.$message.success(
             "\u9078\u629e\u3055\u308c\u305f\u30e9\u30d9\u30eb\u3092\u524a\u9664\u3057\u307e\u3057\u305f\u3002"
           );
+        } else {
+          this.$message.warning(
+            "\u9078\u629e\u3055\u308c\u305f\u30e9\u30d9\u30eb\u304c\u3042\u308a\u307e\u305b\u3093\u3002"
+          );
         }
-      } else {
-        this.$message.warning(
-          "\u9078\u629e\u3055\u308c\u305f\u30e9\u30d9\u30eb\u304c\u3042\u308a\u307e\u305b\u3093\u3002"
-        );
       }
       this.refreshAnnotationSidebar();
     },
@@ -2540,6 +2804,9 @@ export default {
       }
       const normalizedKey = event.key.toLowerCase();
       const isModifierPressed = event.ctrlKey || event.metaKey;
+      const isOptionNavigationTarget = this.isOptionNavigationTarget(
+        event.target
+      );
 
       if (event.code === "Space") {
         this.isSpacePressed = true;
@@ -2589,6 +2856,12 @@ export default {
         return;
       }
 
+      if (!isModifierPressed && normalizedKey === "j") {
+        event.preventDefault();
+        this.setSelectedAnnotationPreviewHidden(true);
+        return;
+      }
+
       if (!isModifierPressed && normalizedKey === "w") {
         event.preventDefault();
         this.startDrawingRect();
@@ -2615,6 +2888,29 @@ export default {
 
       if (
         !isModifierPressed &&
+        !event.altKey &&
+        isOptionNavigationTarget &&
+        (this.isArrowUpEvent(event) || this.isArrowDownEvent(event))
+      ) {
+        return;
+      }
+
+      if (event.altKey && this.isArrowUpEvent(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.moveSelectedAnnotationLayer(1);
+        return;
+      }
+
+      if (event.altKey && this.isArrowDownEvent(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.moveSelectedAnnotationLayer(-1);
+        return;
+      }
+
+      if (
+        !isModifierPressed &&
         /^[1-9]$/.test(event.key) &&
         Number(event.key) <= this.keyboardCategoryShortcutCount
       ) {
@@ -2626,12 +2922,12 @@ export default {
 
       if (event.key === "Delete") {
         this.deleteSelectedRect();
-      } else if (event.key === "ArrowDown") {
+      } else if (this.isArrowDownEvent(event)) {
         event.preventDefault();
         if (this.currentImageIndex < this.images.length - 1) {
           this.selectImage(this.currentImageIndex + 1);
         }
-      } else if (event.key === "ArrowUp") {
+      } else if (this.isArrowUpEvent(event)) {
         event.preventDefault();
         if (this.currentImageIndex > 0) {
           this.selectImage(this.currentImageIndex - 1);
