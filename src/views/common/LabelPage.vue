@@ -8,6 +8,23 @@
       <div class="workspace-panel workspace-panel-library">
         <div class="workspace-panel-header">
           <div class="workspace-panel-title">画像一覧</div>
+          <div
+            v-if="displayImageUploadCount > 0 || displayLabelUploadCount > 0"
+            class="workspace-panel-summary-list"
+          >
+            <div class="workspace-panel-summary-item">
+              {{ imageCountTitle }} {{ displayImageUploadCount }} 件
+            </div>
+            <div class="workspace-panel-summary-item">
+              {{ labelCountTitle }} {{ displayLabelUploadCount }} 件
+            </div>
+            <div class="workspace-panel-summary-item">
+              {{ unmatchedLabelTitle }} {{ displayUnmatchedLabelCount }} 件
+            </div>
+            <div class="workspace-panel-summary-item">
+              {{ unmatchedImageTitle }} {{ displayUnmatchedImageCount }} 件
+            </div>
+          </div>
         </div>
       <div class="thumb-header" v-if="images.length > 0">
         <span class="thumb-header-current">{{ currentImageIndex + 1 }}</span>
@@ -51,29 +68,6 @@
               {{ currentImageName }}
             </div>
           </div>
-          <div class="summary-group">
-            <div class="summary-group-title">{{ uploadSummaryTitle }}</div>
-            <div class="upload-tag-container">
-              <el-tag class="upload-stat-tag" size="medium" effect="plain" type="primary">
-                {{ imageCountTitle }} {{ displayImageUploadCount }} 件
-              </el-tag>
-              <el-tag
-                class="upload-stat-tag"
-                size="medium"
-                effect="plain"
-                :type="displayLabelUploadCount > 0 ? 'success' : 'info'"
-              >
-                {{ labelCountTitle }} {{ displayLabelUploadCount }} 件
-              </el-tag>
-              <el-tag class="upload-stat-tag" size="medium" effect="plain" type="warning">
-                {{ unmatchedLabelTitle }} {{ displayUnmatchedLabelCount }} 件
-              </el-tag>
-              <el-tag class="upload-stat-tag" size="medium" effect="plain" type="danger">
-                {{ unmatchedImageTitle }} {{ displayUnmatchedImageCount }} 件
-              </el-tag>
-            </div>
-          </div>
-          <div class="summary-divider"></div>
           <div class="summary-group">
             <div class="summary-group-title">{{ labelSummaryTitle }}</div>
             <div
@@ -2682,7 +2676,8 @@ export default {
       const uploadedAnnotations = this.getUploadedAnnotationsForImage(
         currentFileName
       );
-      if (uploadedAnnotations) {
+      const currentSource = this.annotationSources[currentFileName];
+      if (uploadedAnnotations && currentSource !== "manual") {
         this.$set(this.annotations, currentFileName, uploadedAnnotations);
         this.$set(this.annotationSources, currentFileName, "local");
       }
@@ -3091,6 +3086,22 @@ export default {
   line-height: 1.3;
 }
 
+.workspace-panel-summary-list {
+  margin-top: 10px;
+}
+
+.workspace-panel-summary-item {
+  color: #6b7c93;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.workspace-panel-summary-item + .workspace-panel-summary-item {
+  margin-top: 2px;
+}
+
 .labeler {
   display: flex;
   flex-direction: column;
@@ -3124,23 +3135,23 @@ input[type="file"] {
 .summary-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 8px;
-  padding: 16px 18px;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 12px 14px;
   border: 1px solid #dde6f3;
-  border-radius: 18px;
+  border-radius: 16px;
   background: linear-gradient(135deg, #f5f8ff 0%, #ffffff 100%);
 }
 .summary-caption {
   flex: 0 0 auto;
   margin-bottom: 0;
-  padding: 5px 12px;
+  padding: 4px 10px;
   border-radius: 999px;
   background: rgba(45, 99, 239, 0.09);
   color: #2d63ef;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-align: center;
 }
 .current-image-name {
@@ -3148,9 +3159,9 @@ input[type="file"] {
   min-width: 0;
   margin-bottom: 0;
   color: #142844;
-  font-size: 19px;
+  font-size: 16px;
   font-weight: 800;
-  line-height: 1.4;
+  line-height: 1.3;
   text-align: left;
   white-space: nowrap;
   overflow: hidden;
@@ -3164,22 +3175,11 @@ input[type="file"] {
   margin-top: 0;
 }
 .summary-group-title {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   color: #5d6f88;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.12em;
-}
-.summary-divider {
-  height: 1px;
-  margin: 18px 0 4px;
-  background: linear-gradient(
-    90deg,
-    rgba(111, 132, 247, 0),
-    rgba(111, 132, 247, 0.26),
-    rgba(143, 112, 218, 0.1),
-    rgba(111, 132, 247, 0)
-  );
 }
 .upload-tag-container {
   display: flex;
@@ -3218,17 +3218,17 @@ input[type="file"] {
 .status-stat-tag {
   flex: 1 1 calc(33.333% - 8px);
   min-width: 0;
-  min-height: 44px;
+  min-height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 10px;
-  font-size: 14px;
+  padding: 0 8px;
+  font-size: 12px;
   font-weight: 700;
-  line-height: 1.3;
+  line-height: 1.2;
   text-align: center;
   white-space: normal;
-  border-radius: 16px;
+  border-radius: 14px;
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
 }
 .status-stat-tag.is-clickable {
@@ -3401,10 +3401,10 @@ input[type="file"] {
   display: flex;
   align-items: baseline;
   justify-content: center;
-  gap: 6px;
-  margin-bottom: 14px;
-  padding: 9px 12px;
-  border-radius: 16px;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  border-radius: 14px;
   background: linear-gradient(135deg, #2f67ee 0%, #7a68e7 100%);
   color: #ffffff;
   font-weight: 700;
@@ -3412,13 +3412,13 @@ input[type="file"] {
   box-shadow: 0 12px 22px rgba(77, 111, 255, 0.22);
 }
 .thumb-header-current {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 800;
   line-height: 1;
 }
 .thumb-header-divider,
 .thumb-header-total {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
   opacity: 0.88;
 }
