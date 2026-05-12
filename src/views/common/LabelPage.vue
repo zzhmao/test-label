@@ -1,8 +1,8 @@
 ﻿<template>
-  <el-container class="label-workspace">
+  <el-container class="label-workspace" :style="workspaceScaleStyle">
     <el-aside
       ref="thumbnailAside"
-      width="248px"
+      :width="workspaceAsideWidth"
       class="workspace-aside workspace-aside-left"
     >
       <div class="workspace-panel workspace-panel-library">
@@ -139,19 +139,39 @@
             :class="{
               'is-panning': isPanning,
               'is-pan-ready': isSpacePressed && !isDrawing && scaleFactor > 1,
+              'is-drawing-mode': isDrawing,
             }"
             :style="canvasViewportStyle"
             @wheel.prevent="handleWheel"
+            @mousemove="handleCanvasViewportMouseMove"
+            @mouseleave="handleCanvasViewportMouseLeave"
           >
             <div class="canvas-scale-container" :style="scaleStyle">
               <canvas id="canvas"></canvas>
+            </div>
+            <div
+              v-if="isDrawingCrosshairVisible"
+              class="drawing-crosshair-overlay"
+            >
+              <div
+                class="drawing-crosshair-line drawing-crosshair-line-horizontal"
+                :style="drawingCrosshairHorizontalStyle"
+              ></div>
+              <div
+                class="drawing-crosshair-line drawing-crosshair-line-vertical"
+                :style="drawingCrosshairVerticalStyle"
+              ></div>
+              <div
+                class="drawing-crosshair-dot"
+                :style="drawingCrosshairDotStyle"
+              ></div>
             </div>
           </div>
         </div>
       </div>
       </div>
     </el-main>
-    <el-aside width="248px" class="workspace-aside">
+    <el-aside :width="workspaceAsideWidth" class="workspace-aside">
       <div class="workspace-panel workspace-panel-tools">
         <div class="workspace-panel-header">
           <div class="workspace-panel-title">ラベル操作</div>
@@ -239,7 +259,7 @@
     <el-dialog
       title="ラベルを選択"
       :visible.sync="labelDialogVisible"
-      width="360px"
+      :width="labelDialogWidth"
       append-to-body
       :close-on-click-modal="false"
       @closed="handleLabelDialogClosed"
@@ -324,6 +344,8 @@ export default {
       isSelectedAnnotationPreviewHidden: false,
       hiddenActiveObject: null,
       hiddenSelectedObjects: [],
+      drawingCrosshairX: null,
+      drawingCrosshairY: null,
       panStartClientX: 0,
       panStartClientY: 0,
       panOriginX: 0,
@@ -337,6 +359,10 @@ export default {
       thumbnailCenterRequestId: 0,
       layoutResizeObserver: null,
       canvasRelayoutFrameId: 0,
+      viewportWidth:
+        typeof window !== "undefined" ? window.innerWidth : 1920,
+      viewportHeight:
+        typeof window !== "undefined" ? window.innerHeight : 1080,
       uploadedAnnotationFiles: {
         exact: {},
         base: {},
@@ -350,6 +376,7 @@ export default {
     };
   },
   mounted() {
+    this.updateViewportSize();
     this.initCanvas();
     this.startLayoutResizeObserver();
     window.addEventListener("resize", this.handleWindowResize);
@@ -405,6 +432,24 @@ export default {
       return Number.isInteger(this.pageConfig.keyboardCategoryShortcutCount)
         ? this.pageConfig.keyboardCategoryShortcutCount
         : 0;
+    },
+    layoutScale() {
+      const baseWidth = 1920;
+      const baseHeight = 1080;
+      const widthScale = this.viewportWidth / baseWidth;
+      const heightScale = this.viewportHeight / baseHeight;
+      return Math.min(1.12, Math.max(0.78, Math.min(widthScale, heightScale)));
+    },
+    workspaceScaleStyle() {
+      return {
+        "--ui-scale": this.layoutScale.toFixed(4),
+      };
+    },
+    workspaceAsideWidth() {
+      return `${Math.round(248 * this.layoutScale)}px`;
+    },
+    labelDialogWidth() {
+      return `${Math.round(360 * this.layoutScale)}px`;
     },
     countWarningVisible() {
       return (
@@ -515,6 +560,39 @@ export default {
         height: `${this.canvas.getHeight()}px`,
       };
     },
+    isDrawingCrosshairVisible() {
+      return (
+        this.isDrawing &&
+        !this.labelDialogVisible &&
+        Number.isFinite(this.drawingCrosshairX) &&
+        Number.isFinite(this.drawingCrosshairY)
+      );
+    },
+    drawingCrosshairHorizontalStyle() {
+      if (!this.isDrawingCrosshairVisible) {
+        return {};
+      }
+      return {
+        top: `${this.drawingCrosshairY}px`,
+      };
+    },
+    drawingCrosshairVerticalStyle() {
+      if (!this.isDrawingCrosshairVisible) {
+        return {};
+      }
+      return {
+        left: `${this.drawingCrosshairX}px`,
+      };
+    },
+    drawingCrosshairDotStyle() {
+      if (!this.isDrawingCrosshairVisible) {
+        return {};
+      }
+      return {
+        left: `${this.drawingCrosshairX}px`,
+        top: `${this.drawingCrosshairY}px`,
+      };
+    },
     scaleStyle() {
       return {
         transform: `translate(${this.panX}px, ${this.panY}px) scale(${this.scaleFactor})`,
@@ -525,6 +603,13 @@ export default {
   methods: {
     unknownClassText(classId) {
       return `\u672a\u77e5\u30af\u30e9\u30b9: ${classId}`;
+    },
+    updateViewportSize() {
+      if (typeof window === "undefined") {
+        return;
+      }
+      this.viewportWidth = window.innerWidth;
+      this.viewportHeight = window.innerHeight;
     },
     handleBeforeUnload(event) {
       if (this.fileNames.length === 0) {
@@ -681,6 +766,23 @@ export default {
         group.setControlsVisibility({ mtr: false });
       }
       return group;
+    },
+    setCanvasCursor(cursorValue) {
+      if (!this.canvas) {
+        return;
+      }
+      this.canvas.defaultCursor = cursorValue;
+      this.canvas.hoverCursor = cursorValue;
+      this.canvas.moveCursor = cursorValue;
+      if (this.canvas.upperCanvasEl) {
+        this.canvas.upperCanvasEl.style.cursor = cursorValue;
+      }
+      if (this.canvas.lowerCanvasEl) {
+        this.canvas.lowerCanvasEl.style.cursor = cursorValue;
+      }
+      if (this.canvas.wrapperEl) {
+        this.canvas.wrapperEl.style.cursor = cursorValue;
+      }
     },
     findAnnotationByGroup(
       group,
@@ -1386,6 +1488,37 @@ export default {
     stopPan() {
       this.isPanning = false;
     },
+    updateDrawingCrosshairPosition(clientX, clientY) {
+      const viewport = this.$refs.canvasViewport;
+      if (!viewport) {
+        return;
+      }
+      const rect = viewport.getBoundingClientRect();
+      this.drawingCrosshairX = Math.min(
+        Math.max(clientX - rect.left, 0),
+        rect.width
+      );
+      this.drawingCrosshairY = Math.min(
+        Math.max(clientY - rect.top, 0),
+        rect.height
+      );
+    },
+    clearDrawingCrosshair() {
+      this.drawingCrosshairX = null;
+      this.drawingCrosshairY = null;
+    },
+    handleCanvasViewportMouseMove(event) {
+      if (!this.isDrawing || this.labelDialogVisible) {
+        return;
+      }
+      this.updateDrawingCrosshairPosition(event.clientX, event.clientY);
+    },
+    handleCanvasViewportMouseLeave() {
+      if (!this.isDrawing) {
+        return;
+      }
+      this.clearDrawingCrosshair();
+    },
     handleCanvasMouseDown(option) {
       if (
         this.isDrawing ||
@@ -1600,29 +1733,35 @@ export default {
     },
     handleWindowResize() {
       if (!this.canvas) {
+        this.updateViewportSize();
         return;
       }
+      this.updateViewportSize();
       this.scheduleCanvasRelayout({
         redrawImage: this.images.length > 0,
         settleFrames: 1,
       });
     },
     resizeCanvas() {
+      const layoutScale = this.layoutScale;
       const stageShell = this.$refs.canvasStageShell;
       const labeler = this.$refs.labeler;
       const summaryPanel = this.$refs.summaryPanel;
       const stagePadding = 0;
       const targetWidth = stageShell
-        ? Math.max(stageShell.clientWidth - stagePadding, 320)
-        : Math.max(labeler.clientWidth, 320);
+        ? Math.max(stageShell.clientWidth - stagePadding, Math.round(320 * layoutScale))
+        : Math.max(labeler.clientWidth, Math.round(320 * layoutScale));
       const labelerHeight = labeler ? labeler.clientHeight : 0;
       const summaryHeight = summaryPanel ? summaryPanel.offsetHeight : 0;
       const canvasHeightFromLayout = labelerHeight
-        ? labelerHeight - summaryHeight - 20
+        ? labelerHeight - summaryHeight - Math.round(20 * layoutScale)
         : 0;
       const targetHeight = Math.max(
-        Math.min(canvasHeightFromLayout || window.innerHeight * 0.6, window.innerHeight * 0.68),
-        280
+        Math.min(
+          canvasHeightFromLayout || this.viewportHeight * 0.6,
+          this.viewportHeight * 0.68
+        ),
+        Math.round(280 * layoutScale)
       );
       this.canvas.setWidth(targetWidth);
       this.canvas.setHeight(targetHeight);
@@ -1635,6 +1774,7 @@ export default {
       this.selectedAnnoRadio = null;
       this.panX = 0;
       this.panY = 0;
+      this.clearDrawingCrosshair();
       this.stopPan();
     },
     resetStatusJumpPointers() {
@@ -2247,10 +2387,10 @@ export default {
       this.canvas.forEachObject((obj) => {
         obj.selectable = false;
         obj.hasControls = false;
-        obj.hoverCursor = "crosshair";
-        obj.moveCursor = "crosshair";
+        obj.hoverCursor = "none";
+        obj.moveCursor = "none";
       });
-      this.canvas.defaultCursor = "crosshair";
+      this.setCanvasCursor("none");
       this.canvas.renderAll();
 
       let rect = null;
@@ -2267,9 +2407,10 @@ export default {
           this.canvas.remove(rect);
           rect = null;
         }
+        this.clearDrawingCrosshair();
         this.isDrawing = false;
-        this.canvas.defaultCursor = "default";
         this.canvas.selection = true;
+        this.setCanvasCursor("default");
         if (this.drawingCleanup === cleanupDrawingMode) {
           this.drawingCleanup = null;
         }
@@ -2294,6 +2435,9 @@ export default {
       this.drawingCleanup = cleanupDrawingMode;
 
       const onMouseDown = (o) => {
+        if (o && o.e) {
+          this.updateDrawingCrosshairPosition(o.e.clientX, o.e.clientY);
+        }
         let pointer = this.canvas.getPointer(o.e);
         pointer = this.clampPointerToImage(pointer);
 
@@ -2319,6 +2463,9 @@ export default {
       };
 
       const onMouseMove = (o) => {
+        if (o && o.e) {
+          this.updateDrawingCrosshairPosition(o.e.clientX, o.e.clientY);
+        }
         if (!rect) return;
 
         let pointer = this.canvas.getPointer(o.e);
@@ -3015,8 +3162,8 @@ export default {
 
 .label-workspace {
   height: 90vh;
-  padding: 0 20px;
-  gap: 20px;
+  padding: 0 calc(20px * var(--ui-scale));
+  gap: calc(20px * var(--ui-scale));
   box-sizing: border-box;
   background: linear-gradient(180deg, #eef3f9 0%, #f7f9fc 42%, #f3f6fb 100%);
   overflow: hidden;
@@ -3024,7 +3171,7 @@ export default {
 
 .workspace-aside,
 .main {
-  padding: 20px 0;
+  padding: calc(20px * var(--ui-scale)) 0;
   min-width: 0;
   min-height: 0;
 }
@@ -3046,7 +3193,7 @@ export default {
   height: 100%;
   min-height: 0;
   border: 1px solid #dfe7f3;
-  border-radius: 28px;
+  border-radius: calc(28px * var(--ui-scale));
   background: #ffffff;
   box-shadow:
     0 18px 36px rgba(15, 23, 42, 0.06),
@@ -3056,7 +3203,10 @@ export default {
 }
 
 .workspace-panel {
-  padding: 26px 18px 20px;
+  padding:
+    calc(26px * var(--ui-scale))
+    calc(18px * var(--ui-scale))
+    calc(20px * var(--ui-scale));
 }
 
 .workspace-panel-library {
@@ -3067,39 +3217,45 @@ export default {
 }
 
 .workspace-main-shell {
-  padding: 26px 22px 24px;
+  padding:
+    calc(26px * var(--ui-scale))
+    calc(22px * var(--ui-scale))
+    calc(24px * var(--ui-scale));
   overflow: hidden;
 }
 
 .workspace-panel-header {
   position: relative;
   z-index: 1;
-  margin-bottom: 18px;
-  padding: 2px 4px 14px;
+  margin-bottom: calc(18px * var(--ui-scale));
+  padding:
+    calc(2px * var(--ui-scale))
+    calc(4px * var(--ui-scale))
+    calc(14px * var(--ui-scale));
   border-bottom: 1px solid #e8edf6;
 }
 
 .workspace-panel-title {
   color: #10253f;
-  font-size: 18px;
+  font-size: calc(18px * var(--ui-scale));
   font-weight: 800;
   line-height: 1.3;
 }
 
 .workspace-panel-summary-list {
-  margin-top: 10px;
+  margin-top: calc(10px * var(--ui-scale));
 }
 
 .workspace-panel-summary-item {
   color: #6b7c93;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-scale));
   font-weight: 500;
   line-height: 1.6;
   white-space: nowrap;
 }
 
 .workspace-panel-summary-item + .workspace-panel-summary-item {
-  margin-top: 2px;
+  margin-top: calc(2px * var(--ui-scale));
 }
 
 .labeler {
@@ -3114,16 +3270,16 @@ export default {
 }
 
 input[type="file"] {
-  margin-top: 10px;
+  margin-top: calc(10px * var(--ui-scale));
 }
 .summary-panel {
   position: relative;
   flex: 0 0 auto;
   width: 100%;
-  margin-bottom: 20px;
-  padding: 24px;
+  margin-bottom: calc(20px * var(--ui-scale));
+  padding: calc(24px * var(--ui-scale));
   border: 1px solid #e1e8f4;
-  border-radius: 26px;
+  border-radius: calc(26px * var(--ui-scale));
   background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
   box-shadow:
     0 16px 30px rgba(15, 23, 42, 0.05),
@@ -3135,21 +3291,25 @@ input[type="file"] {
 .summary-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 6px;
-  padding: 12px 14px;
+  gap: calc(10px * var(--ui-scale));
+  margin-top: calc(6px * var(--ui-scale));
+  padding:
+    calc(12px * var(--ui-scale))
+    calc(14px * var(--ui-scale));
   border: 1px solid #dde6f3;
-  border-radius: 16px;
+  border-radius: calc(16px * var(--ui-scale));
   background: linear-gradient(135deg, #f5f8ff 0%, #ffffff 100%);
 }
 .summary-caption {
   flex: 0 0 auto;
   margin-bottom: 0;
-  padding: 4px 10px;
+  padding:
+    calc(4px * var(--ui-scale))
+    calc(10px * var(--ui-scale));
   border-radius: 999px;
   background: rgba(45, 99, 239, 0.09);
   color: #2d63ef;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   font-weight: 800;
   letter-spacing: 0.06em;
   text-align: center;
@@ -3159,7 +3319,7 @@ input[type="file"] {
   min-width: 0;
   margin-bottom: 0;
   color: #142844;
-  font-size: 16px;
+  font-size: calc(16px * var(--ui-scale));
   font-weight: 800;
   line-height: 1.3;
   text-align: left;
@@ -3169,15 +3329,15 @@ input[type="file"] {
   box-sizing: border-box;
 }
 .summary-group {
-  margin-top: 18px;
+  margin-top: calc(18px * var(--ui-scale));
 }
 .summary-panel > .summary-group:first-of-type {
   margin-top: 0;
 }
 .summary-group-title {
-  margin-bottom: 10px;
+  margin-bottom: calc(10px * var(--ui-scale));
   color: #5d6f88;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   font-weight: 800;
   letter-spacing: 0.12em;
 }
@@ -3186,24 +3346,24 @@ input[type="file"] {
   align-items: stretch;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: calc(10px * var(--ui-scale));
   width: 100%;
   margin-bottom: 0;
 }
 .upload-stat-tag {
   flex: 1 1 calc(25% - 8px);
   min-width: 0;
-  min-height: 44px;
+  min-height: calc(44px * var(--ui-scale));
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 10px;
-  font-size: 14px;
+  padding: 0 calc(10px * var(--ui-scale));
+  font-size: calc(14px * var(--ui-scale));
   font-weight: 700;
   line-height: 1.3;
   text-align: center;
   white-space: normal;
-  border-radius: 16px;
+  border-radius: calc(16px * var(--ui-scale));
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
 }
 .status-tag-container {
@@ -3211,24 +3371,24 @@ input[type="file"] {
   align-items: stretch;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: calc(10px * var(--ui-scale));
   width: 100%;
   margin-bottom: 0;
 }
 .status-stat-tag {
   flex: 1 1 calc(33.333% - 8px);
   min-width: 0;
-  min-height: 38px;
+  min-height: calc(38px * var(--ui-scale));
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 8px;
-  font-size: 12px;
+  padding: 0 calc(8px * var(--ui-scale));
+  font-size: calc(12px * var(--ui-scale));
   font-weight: 700;
   line-height: 1.2;
   text-align: center;
   white-space: normal;
-  border-radius: 14px;
+  border-radius: calc(14px * var(--ui-scale));
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
 }
 .status-stat-tag.is-clickable {
@@ -3286,11 +3446,11 @@ input[type="file"] {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 14px;
+  gap: calc(14px * var(--ui-scale));
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-right: 4px;
+  padding-right: calc(4px * var(--ui-scale));
 }
 
 .workspace-panel-library .thumbnails-container {
@@ -3304,20 +3464,20 @@ input[type="file"] {
 .thumbnail {
   position: relative;
   cursor: pointer;
-  padding: 8px;
+  padding: calc(8px * var(--ui-scale));
   border: 1px solid #dce6f3;
   transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
-  border-radius: 20px;
+  border-radius: calc(20px * var(--ui-scale));
   overflow: hidden;
   background: #fff;
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
 }
 .thumbnail-img {
   width: 100%;
-  height: 124px;
+  height: calc(124px * var(--ui-scale));
   object-fit: cover;
   display: block;
-  border-radius: 14px;
+  border-radius: calc(14px * var(--ui-scale));
 }
 .thumbnail:hover {
   transform: translateY(-2px);
@@ -3326,12 +3486,14 @@ input[type="file"] {
 }
 .thumbnail-status {
   position: absolute;
-  top: 16px;
-  left: 16px;
+  top: calc(16px * var(--ui-scale));
+  left: calc(16px * var(--ui-scale));
   z-index: 1;
-  padding: 4px 10px;
+  padding:
+    calc(4px * var(--ui-scale))
+    calc(10px * var(--ui-scale));
   border-radius: 999px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   line-height: 1.2;
   font-weight: 700;
   color: #fff;
@@ -3369,7 +3531,7 @@ input[type="file"] {
   overflow: hidden;
   margin-top: 0;
   border: 1px solid #d7e3f4;
-  border-radius: 24px;
+  border-radius: calc(24px * var(--ui-scale));
   background: linear-gradient(180deg, #fdfefe 0%, #f4f7fb 100%);
   box-shadow:
     0 14px 34px rgba(15, 23, 42, 0.08),
@@ -3380,6 +3542,50 @@ input[type="file"] {
   display: inline-block;
 }
 
+.drawing-crosshair-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.drawing-crosshair-line {
+  position: absolute;
+  background: #ffffff !important;
+  opacity: 1;
+  box-shadow: none;
+}
+
+.drawing-crosshair-line-horizontal {
+  left: 0;
+  width: 100%;
+  height: max(1px, calc(1px * var(--ui-scale)));
+  transform: translateY(-50%);
+}
+
+.drawing-crosshair-line-vertical {
+  top: 0;
+  height: 100%;
+  width: max(1px, calc(1px * var(--ui-scale)));
+  transform: translateX(-50%);
+}
+
+.drawing-crosshair-dot {
+  position: absolute;
+  width: max(4px, calc(6px * var(--ui-scale)));
+  height: max(4px, calc(6px * var(--ui-scale)));
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+  transform: translate(-50%, -50%);
+}
+
+.canvas-viewport.is-drawing-mode,
+.canvas-viewport.is-drawing-mode *,
+.canvas-viewport.is-drawing-mode canvas {
+  cursor: none !important;
+}
+
 .canvas-viewport.is-pan-ready {
   cursor: grab;
 }
@@ -3388,10 +3594,10 @@ input[type="file"] {
   cursor: grabbing;
 }
 .thumbnail.active {
-  border-width: 4px;
+  border-width: calc(4px * var(--ui-scale));
   border-color: #3f67ff;
   box-shadow:
-    0 0 0 6px rgba(77, 111, 255, 0.14),
+    0 0 0 calc(6px * var(--ui-scale)) rgba(77, 111, 255, 0.14),
     0 20px 36px rgba(77, 111, 255, 0.28);
 }
 .thumb-header {
@@ -3401,10 +3607,12 @@ input[type="file"] {
   display: flex;
   align-items: baseline;
   justify-content: center;
-  gap: 4px;
-  margin-bottom: 12px;
-  padding: 6px 10px;
-  border-radius: 14px;
+  gap: calc(4px * var(--ui-scale));
+  margin-bottom: calc(12px * var(--ui-scale));
+  padding:
+    calc(6px * var(--ui-scale))
+    calc(10px * var(--ui-scale));
+  border-radius: calc(14px * var(--ui-scale));
   background: linear-gradient(135deg, #2f67ee 0%, #7a68e7 100%);
   color: #ffffff;
   font-weight: 700;
@@ -3412,13 +3620,13 @@ input[type="file"] {
   box-shadow: 0 12px 22px rgba(77, 111, 255, 0.22);
 }
 .thumb-header-current {
-  font-size: 16px;
+  font-size: calc(16px * var(--ui-scale));
   font-weight: 800;
   line-height: 1;
 }
 .thumb-header-divider,
 .thumb-header-total {
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-scale));
   font-weight: 600;
   opacity: 0.88;
 }
@@ -3426,14 +3634,14 @@ input[type="file"] {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  margin-top: 6px;
+  margin-top: calc(6px * var(--ui-scale));
   min-height: 0;
 }
 .label-dialog-select {
   width: 100%;
 }
 ::v-deep .tool-form .el-form-item {
-  margin-bottom: 14px;
+  margin-bottom: calc(14px * var(--ui-scale));
 }
 ::v-deep .tool-form .el-form-item__content {
   width: 100%;
@@ -3449,8 +3657,8 @@ input[type="file"] {
   min-height: 0;
 }
 ::v-deep .tool-select .el-input__inner {
-  height: 46px;
-  border-radius: 14px;
+  height: calc(46px * var(--ui-scale));
+  border-radius: calc(14px * var(--ui-scale));
   border-color: #dce4f2;
   background: #f9fbff;
   color: #19304f;
@@ -3464,9 +3672,9 @@ input[type="file"] {
 }
 ::v-deep .tool-button.el-button {
   width: 100%;
-  height: 46px;
-  border-radius: 14px;
-  font-size: 15px;
+  height: calc(46px * var(--ui-scale));
+  border-radius: calc(14px * var(--ui-scale));
+  font-size: calc(15px * var(--ui-scale));
   font-weight: 700;
 }
 ::v-deep .tool-button.el-button--primary {
@@ -3487,16 +3695,16 @@ input[type="file"] {
 .tool-inline-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: calc(10px * var(--ui-scale));
 }
 ::v-deep .tool-icon-button.el-button {
   width: 100%;
-  height: 44px;
-  border-radius: 14px;
+  height: calc(44px * var(--ui-scale));
+  border-radius: calc(14px * var(--ui-scale));
   border-color: #d9e2f1;
   background: #f7faff;
   color: #315bc4;
-  font-size: 16px;
+  font-size: calc(16px * var(--ui-scale));
 }
 .annotation-radio-group {
   display: flex;
@@ -3505,9 +3713,9 @@ input[type="file"] {
   height: 100%;
   overflow-y: auto;
   min-height: 0;
-  padding: 8px;
+  padding: calc(8px * var(--ui-scale));
   border: 1px solid #e3e9f4;
-  border-radius: 18px;
+  border-radius: calc(18px * var(--ui-scale));
   background: linear-gradient(180deg, #fbfcff 0%, #f7f9fc 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.94);
 }
@@ -3515,10 +3723,12 @@ input[type="file"] {
   display: flex;
   align-items: center;
   margin-right: 0;
-  margin-bottom: 10px;
-  padding: 11px 12px;
+  margin-bottom: calc(10px * var(--ui-scale));
+  padding:
+    calc(11px * var(--ui-scale))
+    calc(12px * var(--ui-scale));
   border: 1px solid #e5ebf5;
-  border-radius: 14px;
+  border-radius: calc(14px * var(--ui-scale));
   background: #ffffff;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
@@ -3535,27 +3745,31 @@ input[type="file"] {
   line-height: 1.45;
   color: #1d2f48;
   font-weight: 600;
+  font-size: calc(14px * var(--ui-scale));
 }
 ::v-deep .annotation-radio-group .el-radio__input.is-checked + .el-radio__label {
   color: #2048b3;
 }
 ::v-deep .tool-form .el-alert {
-  border-radius: 16px;
+  border-radius: calc(16px * var(--ui-scale));
 }
 .annotation-count-text {
   display: block;
-  padding: 12px 14px;
+  padding:
+    calc(12px * var(--ui-scale))
+    calc(14px * var(--ui-scale));
   border: 1px solid #e3e9f4;
-  border-radius: 16px;
+  border-radius: calc(16px * var(--ui-scale));
   background: #f9fbff;
   color: #1e3048;
   font-weight: 700;
   text-align: center;
+  font-size: calc(14px * var(--ui-scale));
 }
 @media (max-width: 1440px) {
   .label-workspace {
-    padding: 0 16px;
-    gap: 16px;
+    padding: 0 calc(16px * var(--ui-scale));
+    gap: calc(16px * var(--ui-scale));
   }
 
   .summary-panel,
@@ -3568,7 +3782,7 @@ input[type="file"] {
   .label-workspace {
     flex-direction: column;
     height: auto;
-    padding: 16px;
+    padding: calc(16px * var(--ui-scale));
   }
 
   .workspace-aside,
