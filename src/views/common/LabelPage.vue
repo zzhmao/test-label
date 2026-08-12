@@ -150,20 +150,21 @@
               <canvas id="canvas"></canvas>
             </div>
             <div
-              v-if="isDrawingCrosshairVisible"
+              v-show="isDrawing && !labelDialogVisible && drawingCrosshairVisible"
               class="drawing-crosshair-overlay"
+              ref="drawingCrosshairOverlay"
             >
               <div
                 class="drawing-crosshair-line drawing-crosshair-line-horizontal"
-                :style="drawingCrosshairHorizontalStyle"
+                ref="drawingCrosshairHorizontal"
               ></div>
               <div
                 class="drawing-crosshair-line drawing-crosshair-line-vertical"
-                :style="drawingCrosshairVerticalStyle"
+                ref="drawingCrosshairVertical"
               ></div>
               <div
                 class="drawing-crosshair-dot"
-                :style="drawingCrosshairDotStyle"
+                ref="drawingCrosshairDot"
               ></div>
             </div>
           </div>
@@ -344,8 +345,9 @@ export default {
       isSelectedAnnotationPreviewHidden: false,
       hiddenActiveObject: null,
       hiddenSelectedObjects: [],
-      drawingCrosshairX: null,
-      drawingCrosshairY: null,
+      drawingCrosshairVisible: false,
+      drawingCrosshairFrameId: 0,
+      pendingDrawingCrosshairPoint: null,
       panStartClientX: 0,
       panStartClientY: 0,
       panOriginX: 0,
@@ -378,7 +380,6 @@ export default {
   mounted() {
     this.updateViewportSize();
     this.initCanvas();
-    this.startLayoutResizeObserver();
     window.addEventListener("resize", this.handleWindowResize);
     window.addEventListener("keydown", this.handleKeyDown);
     window.addEventListener("keyup", this.handleKeyUp);
@@ -397,6 +398,7 @@ export default {
   },
   beforeDestroy() {
     this.stopLayoutResizeObserver();
+    this.clearDrawingCrosshair();
     window.removeEventListener("resize", this.handleWindowResize);
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup", this.handleKeyUp);
@@ -558,39 +560,6 @@ export default {
       return {
         width: `${this.canvas.getWidth()}px`,
         height: `${this.canvas.getHeight()}px`,
-      };
-    },
-    isDrawingCrosshairVisible() {
-      return (
-        this.isDrawing &&
-        !this.labelDialogVisible &&
-        Number.isFinite(this.drawingCrosshairX) &&
-        Number.isFinite(this.drawingCrosshairY)
-      );
-    },
-    drawingCrosshairHorizontalStyle() {
-      if (!this.isDrawingCrosshairVisible) {
-        return {};
-      }
-      return {
-        top: `${this.drawingCrosshairY}px`,
-      };
-    },
-    drawingCrosshairVerticalStyle() {
-      if (!this.isDrawingCrosshairVisible) {
-        return {};
-      }
-      return {
-        left: `${this.drawingCrosshairX}px`,
-      };
-    },
-    drawingCrosshairDotStyle() {
-      if (!this.isDrawingCrosshairVisible) {
-        return {};
-      }
-      return {
-        left: `${this.drawingCrosshairX}px`,
-        top: `${this.drawingCrosshairY}px`,
       };
     },
     scaleStyle() {
@@ -784,6 +753,50 @@ export default {
         this.canvas.wrapperEl.style.cursor = cursorValue;
       }
     },
+    getAbsoluteRectBoxFromGroup(group) {
+      if (!group || !group.item) {
+        return null;
+      }
+      const rect = group.item(0);
+      if (!rect || typeof rect.getBoundingRect !== "function") {
+        return null;
+      }
+      const rectBounds = rect.getBoundingRect(true, true);
+      if (!rectBounds) {
+        return null;
+      }
+      const totalScaleX = Math.abs((group.scaleX || 1) * (rect.scaleX || 1));
+      const totalScaleY = Math.abs((group.scaleY || 1) * (rect.scaleY || 1));
+      const halfStrokeX = ((Number(rect.strokeWidth) || 0) * totalScaleX) / 2;
+      const halfStrokeY = ((Number(rect.strokeWidth) || 0) * totalScaleY) / 2;
+      return {
+        left: rectBounds.left + halfStrokeX,
+        top: rectBounds.top + halfStrokeY,
+        width: rect.width * totalScaleX,
+        height: rect.height * totalScaleY,
+      };
+    },
+    getNormalizedRelativeFromAbsoluteBox(absoluteBox) {
+      if (!absoluteBox || !this.canvas || !this.canvas.backgroundImage) {
+        return null;
+      }
+      const img = this.canvas.backgroundImage;
+      const relativeLeft =
+        (absoluteBox.left - img.left) / img.getScaledWidth();
+      const relativeTop =
+        (absoluteBox.top - img.top) / img.getScaledHeight();
+      const relativeWidth = absoluteBox.width / img.getScaledWidth();
+      const relativeHeight = absoluteBox.height / img.getScaledHeight();
+      return this.normalizeRelativeBox({
+        left: relativeLeft,
+        top: relativeTop,
+        width: relativeWidth,
+        height: relativeHeight,
+      });
+    },
+    getNormalizedRelativeFromRectData(rectData) {
+      return this.getNormalizedRelativeFromAbsoluteBox(rectData);
+    },
     findAnnotationByGroup(
       group,
       fileName = this.fileNames[this.currentImageIndex]
@@ -833,23 +846,8 @@ export default {
       return JSON.stringify(leftSnapshot) === JSON.stringify(rightSnapshot);
     },
     getNormalizedRelativeFromGroup(group) {
-      if (!group || !this.canvas || !this.canvas.backgroundImage) {
-        return null;
-      }
-      const rect = group.item(0);
-      const img = this.canvas.backgroundImage;
-      const relativeLeft = (group.left - img.left) / img.getScaledWidth();
-      const relativeTop = (group.top - img.top) / img.getScaledHeight();
-      const relativeWidth =
-        (rect.width * (group.scaleX || 1)) / img.getScaledWidth();
-      const relativeHeight =
-        (rect.height * (group.scaleY || 1)) / img.getScaledHeight();
-      return this.normalizeRelativeBox({
-        left: relativeLeft,
-        top: relativeTop,
-        width: relativeWidth,
-        height: relativeHeight,
-      });
+      const absoluteBox = this.getAbsoluteRectBoxFromGroup(group);
+      return this.getNormalizedRelativeFromAbsoluteBox(absoluteBox);
     },
     applyAnnotationSnapshot(
       fileName,
@@ -1096,8 +1094,8 @@ export default {
       }
       const strokeColor = this.getColorForText(labelText);
       const rect = new fabric.Rect({
-        left: rectData.left,
-        top: rectData.top,
+        left: 0,
+        top: 0,
         width: rectData.width,
         height: rectData.height,
         fill: "rgba(144,238,144, 0.5)",
@@ -1107,8 +1105,8 @@ export default {
         evented: false,
       });
       const textObj = new fabric.Text(labelText, {
-        left: rectData.left + rectData.width / 20,
-        top: rectData.top + rectData.height / 20,
+        left: rectData.width / 20,
+        top: rectData.height / 20,
         originX: "left",
         originY: "top",
         fontSize: 20,
@@ -1165,6 +1163,17 @@ export default {
         this.labelDialogVisible = false;
         return;
       }
+      const normalizedRelative = this.getNormalizedRelativeFromRectData(
+        this.pendingDrawRectData
+      );
+      if (
+        !normalizedRelative ||
+        normalizedRelative.width <= 0 ||
+        normalizedRelative.height <= 0
+      ) {
+        this.labelDialogVisible = false;
+        return;
+      }
 
       const group = this.buildManualAnnotationGroup(
         this.pendingDrawRectData,
@@ -1178,7 +1187,7 @@ export default {
       this.selectedText = labelText;
       this.configureAnnotationGroup(group, { editable: !this.isDrawing });
       this.canvas.add(group);
-      this.saveAnnotation(group);
+      this.saveAnnotation(group, normalizedRelative);
 
       const currentFileName = this.fileNames[this.currentImageIndex];
       const annotationList = this.annotations[currentFileName] || [];
@@ -1444,6 +1453,16 @@ export default {
       this.panX = 0;
       this.panY = 0;
     },
+    requestCanvasRender() {
+      if (!this.canvas) {
+        return;
+      }
+      if (typeof this.canvas.requestRenderAll === "function") {
+        this.canvas.requestRenderAll();
+        return;
+      }
+      this.canvas.renderAll();
+    },
     selectCategoryByOffset(offset) {
       if (!this.options.length) {
         return;
@@ -1494,18 +1513,45 @@ export default {
         return;
       }
       const rect = viewport.getBoundingClientRect();
-      this.drawingCrosshairX = Math.min(
-        Math.max(clientX - rect.left, 0),
-        rect.width
-      );
-      this.drawingCrosshairY = Math.min(
-        Math.max(clientY - rect.top, 0),
-        rect.height
-      );
+      const nextPoint = {
+        x: Math.min(Math.max(clientX - rect.left, 0), rect.width),
+        y: Math.min(Math.max(clientY - rect.top, 0), rect.height),
+      };
+      this.pendingDrawingCrosshairPoint = nextPoint;
+      if (this.drawingCrosshairFrameId) {
+        return;
+      }
+      this.drawingCrosshairFrameId = window.requestAnimationFrame(() => {
+        this.drawingCrosshairFrameId = 0;
+        const point = this.pendingDrawingCrosshairPoint;
+        if (!point) {
+          return;
+        }
+        const horizontal = this.$refs.drawingCrosshairHorizontal;
+        const vertical = this.$refs.drawingCrosshairVertical;
+        const dot = this.$refs.drawingCrosshairDot;
+        if (horizontal) {
+          horizontal.style.top = `${point.y}px`;
+        }
+        if (vertical) {
+          vertical.style.left = `${point.x}px`;
+        }
+        if (dot) {
+          dot.style.left = `${point.x}px`;
+          dot.style.top = `${point.y}px`;
+        }
+        if (!this.drawingCrosshairVisible) {
+          this.drawingCrosshairVisible = true;
+        }
+      });
     },
     clearDrawingCrosshair() {
-      this.drawingCrosshairX = null;
-      this.drawingCrosshairY = null;
+      this.pendingDrawingCrosshairPoint = null;
+      if (this.drawingCrosshairFrameId) {
+        window.cancelAnimationFrame(this.drawingCrosshairFrameId);
+        this.drawingCrosshairFrameId = 0;
+      }
+      this.drawingCrosshairVisible = false;
     },
     handleCanvasViewportMouseMove(event) {
       if (!this.isDrawing || this.labelDialogVisible) {
@@ -2310,6 +2356,12 @@ export default {
         }
         return false;
       }
+      if (index !== this.currentImageIndex) {
+        this.stopPan();
+        this.scaleFactor = 1;
+        this.panX = 0;
+        this.panY = 0;
+      }
       this.undoStack = [];
       this.redoStack = [];
       this.displayImage(index);
@@ -2463,9 +2515,6 @@ export default {
       };
 
       const onMouseMove = (o) => {
-        if (o && o.e) {
-          this.updateDrawingCrosshairPosition(o.e.clientX, o.e.clientY);
-        }
         if (!rect) return;
 
         let pointer = this.canvas.getPointer(o.e);
@@ -2482,7 +2531,7 @@ export default {
         const height = Math.abs(y2 - y1);
 
         rect.set({ left, top, width, height });
-        this.canvas.renderAll();
+        this.requestCanvasRender();
       };
 
       const onMouseUp = () => {
@@ -2742,10 +2791,11 @@ export default {
       this.canvas.renderAll();
       this.refreshAnnotationSidebar();
     },
-    saveAnnotation(group) {
+    saveAnnotation(group, normalizedRelativeOverride = null) {
       const text = group.item(1).text;
       const rect = group.item(0);
-      const normalizedRelative = this.getNormalizedRelativeFromGroup(group);
+      const normalizedRelative =
+        normalizedRelativeOverride || this.getNormalizedRelativeFromGroup(group);
       if (
         !normalizedRelative ||
         normalizedRelative.width <= 0 ||
@@ -2792,8 +2842,8 @@ export default {
         return null;
       }
       const rect = new fabric.Rect({
-        left,
-        top,
+        left: 0,
+        top: 0,
         width,
         height,
         fill: "rgba(144,238,144, 0.5)",
@@ -2801,8 +2851,8 @@ export default {
         strokeWidth: 5,
       });
       const text = new fabric.Text(annotation.text, {
-        left: left + width / 20,
-        top: top + height / 20,
+        left: width / 20,
+        top: height / 20,
         originX: "left",
         originY: "top",
         fontSize: 20,
