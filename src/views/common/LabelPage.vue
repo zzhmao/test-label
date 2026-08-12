@@ -753,29 +753,6 @@ export default {
         this.canvas.wrapperEl.style.cursor = cursorValue;
       }
     },
-    getAbsoluteRectBoxFromGroup(group) {
-      if (!group || !group.item) {
-        return null;
-      }
-      const rect = group.item(0);
-      if (!rect || typeof rect.getBoundingRect !== "function") {
-        return null;
-      }
-      const rectBounds = rect.getBoundingRect(true, true);
-      if (!rectBounds) {
-        return null;
-      }
-      const totalScaleX = Math.abs((group.scaleX || 1) * (rect.scaleX || 1));
-      const totalScaleY = Math.abs((group.scaleY || 1) * (rect.scaleY || 1));
-      const halfStrokeX = ((Number(rect.strokeWidth) || 0) * totalScaleX) / 2;
-      const halfStrokeY = ((Number(rect.strokeWidth) || 0) * totalScaleY) / 2;
-      return {
-        left: rectBounds.left + halfStrokeX,
-        top: rectBounds.top + halfStrokeY,
-        width: rect.width * totalScaleX,
-        height: rect.height * totalScaleY,
-      };
-    },
     getNormalizedRelativeFromAbsoluteBox(absoluteBox) {
       if (!absoluteBox || !this.canvas || !this.canvas.backgroundImage) {
         return null;
@@ -846,7 +823,19 @@ export default {
       return JSON.stringify(leftSnapshot) === JSON.stringify(rightSnapshot);
     },
     getNormalizedRelativeFromGroup(group) {
-      const absoluteBox = this.getAbsoluteRectBoxFromGroup(group);
+      if (!group || !this.canvas || !this.canvas.backgroundImage) {
+        return null;
+      }
+      const rect = group.item && group.item(0);
+      if (!rect) {
+        return null;
+      }
+      const absoluteBox = {
+        left: group.left || 0,
+        top: group.top || 0,
+        width: rect.width * Math.abs(group.scaleX || 1),
+        height: rect.height * Math.abs(group.scaleY || 1),
+      };
       return this.getNormalizedRelativeFromAbsoluteBox(absoluteBox);
     },
     applyAnnotationSnapshot(
@@ -928,9 +917,25 @@ export default {
         fill: rect.stroke || found.annotation.fill,
         conf: found.annotation.conf,
       };
-      this.applyAnnotationSnapshot(found.fileName, found.annotation, nextSnapshot, {
-        activate: true,
-      });
+      found.annotation.text = nextSnapshot.text;
+      found.annotation.class = nextSnapshot.class;
+      found.annotation.relative = nextSnapshot.relative;
+      found.annotation.fill = nextSnapshot.fill;
+      found.annotation.fabricGroup = group;
+      if (Object.prototype.hasOwnProperty.call(nextSnapshot, "conf")) {
+        found.annotation.conf = nextSnapshot.conf;
+      }
+      group.visible =
+        !this.isAnnotationPreviewHidden &&
+        group !== this.hiddenActiveObject &&
+        !this.hiddenSelectedObjects.includes(group);
+      group.setCoords();
+      this.$set(this.annotationSources, found.fileName, "manual");
+      this.refreshAnnotationSidebar();
+      if (this.canvas) {
+        this.canvas.setActiveObject(group);
+        this.canvas.renderAll();
+      }
       return {
         fileName: found.fileName,
         annotation: found.annotation,
